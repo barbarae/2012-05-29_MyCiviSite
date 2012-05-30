@@ -1,0 +1,46 @@
+<?php
+       
+	/*
+	 * Implementations of my_custom_hook_form_alter() for each form by number that I want to modify.
+	 */
+	/**
+	 * The following checks each 2012-puzzle-page entry to see if the entrant has picked the right two numbers.
+	 * If so, then switch the next "page" to the Winner's Confirmation.
+	 */
+function mycustom_forms_form_alter(&$form, &$form_state, $form_id){
+//dsm($form_state);
+
+//dsm($_SESSION);
+	if ($form_id == 'webform_client_form_42') {
+		$form['#submit'][] = 'mycustom_forms_form_submit'; 
+	}
+	if ($form_id == 'webform_client_form_43') {
+		$form['#node']->webform['components'][48]['value'] = $_SESSION['hunter_id']; 
+	}
+//dsm($form);
+}
+
+function mycustom_forms_form_submit(&$form, &$form_state) {
+  $values = $form_state['values']['submitted_tree'];
+  if (isset($values['hunter_id'])) {
+    $_SESSION['hunter_id'] = $values['hunter_id'];
+  }
+  $v1 = '';
+  $v2 = '';
+  if (is_array($values)) {
+    foreach ($values AS $key => $value) {
+      if(strpos($key, 'number_one') === 0) {
+        $v1 = $value;
+      }
+      else if(strpos($key, 'number_two') === 0) {
+        $v2 = $value;
+      }
+    }
+  }
+  if ($v1 == 191 && $v2 == 161) {
+    drupal_goto('content/2012-number-puzzle-winner');
+  }
+  
+dsm($form_state);
+dsm($form);	
+}

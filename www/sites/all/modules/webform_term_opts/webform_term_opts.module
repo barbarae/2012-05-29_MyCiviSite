@@ -1,0 +1,57 @@
+<?php
+
+/**
+ * @file
+ * This is a simple module implementing a webform hook to offer vocabulary
+ * terms to be used as options in form components.
+ * 
+ * @author Martin Martinov <martinm@propeople.dk>
+ */
+
+/**
+ * Implementation of hook_webform_select_options_info().
+ */
+function webform_term_opts_webform_select_options_info() {
+  $items = array();
+  
+  $vocabularies = taxonomy_get_vocabularies();
+  
+  foreach ($vocabularies as $voc) {
+    /**
+     * @todo Add a setting that enables each vocabulary to be shown here.
+     */
+    $items['vid_' . $voc->vid] = array(
+      'title' => $voc->name,
+      'options callback' => 'webform_term_options_vocabulary_terms',
+      'options arguments' => $voc->vid,
+    );
+  }
+
+  return $items;
+}
+
+/**
+ * Option list containing all terms of specified vocabulary.
+ */
+function webform_term_options_vocabulary_terms($component, $flat, $filter, $vid) {
+  $terms = array();
+  
+  $tree = taxonomy_get_tree($vid);
+
+  $use_i18n = module_exists('i18n_taxonomy');
+
+  foreach ($tree as $term) {
+    $prefix = '';
+    if (!$flat) {
+      $prefix = str_repeat('-', $term->depth);
+    }
+    if ($use_i18n) {
+      $terms['tid_' . $term->tid] = $prefix . i18n_taxonomy_term_name($term);
+    }
+    else {
+      $terms['tid_' . $term->tid] = $prefix . $term->name;
+    }
+  }
+
+  return $terms;
+}

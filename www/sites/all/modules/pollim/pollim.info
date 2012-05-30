@@ -1,0 +1,27 @@
+name = Poll Improved
+description = Provides entity based poll functionality for both authenticated and anonymous users.
+core = 7.x
+version = VERSION
+package = Poll
+configure = admin/config/content/pollim
+
+dependencies[] = entity
+dependencies[] = views
+
+dependencies[] = choices
+
+files[] = pollim.admin.inc
+files[] = pollim_type.admin.inc
+files[] = views/pollim.views.inc
+files[] = views/pollim_handler_link_field.inc
+files[] = views/pollim_handler_delete_link_field.inc
+files[] = views/pollim_handler_edit_link_field.inc
+files[] = views/pollim_handler_pollim_operations_field.inc
+
+
+; Information added by drupal.org packaging script on 2011-09-29
+version = "7.x-1.x-dev"
+core = "7.x"
+project = "pollim"
+datestamp = "1317298567"
+

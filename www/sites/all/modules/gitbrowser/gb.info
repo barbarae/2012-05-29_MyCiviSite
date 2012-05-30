@@ -1,0 +1,17 @@
+name = Git Browser
+description = Provide functionality to allow users to browse the a GIT repository
+core = 7.x
+php = 5.2
+package = "GIT"
+
+files[] = gb.module
+files[] = gb.inc
+files[] = gb.batch.inc
+files[] = gb.admin.inc
+
+; Information added by drupal.org packaging script on 2011-02-25
+version = "7.x-1.x-dev"
+core = "7.x"
+project = "gitbrowser"
+datestamp = "1298619338"
+

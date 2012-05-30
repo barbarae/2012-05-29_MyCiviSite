@@ -1,0 +1,8 @@
+<?php
+
+/**
+ * @file
+ * Provides rules integrations for the Context module
+ *
+ * see context_rules.rules.inc
+ */

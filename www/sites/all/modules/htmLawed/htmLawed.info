@@ -1,0 +1,9 @@
+name = "htmLawed (X)HTML filter/purifier"
+description = "Restrict HTML markup and make content secure, and standard- and admin. policy-compliant"
+core = 7.x
+; Information added by drupal.org packaging script on 2012-05-12
+version = "7.x-3.2"
+core = "7.x"
+project = "htmLawed"
+datestamp = "1336810255"
+

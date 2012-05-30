@@ -1,0 +1,15 @@
+name = e-Library Search
+description = Provides blocks to search SirsiDynix e-Library based catalogs
+core = 7.x
+configure=admin/config/search/elibrary
+package = Library Software
+
+files[] = e_library_search.module
+
+
+; Information added by drupal.org packaging script on 2011-05-25
+version = "7.x-1.0"
+core = "7.x"
+project = "e_library_search"
+datestamp = "1306333916"
+

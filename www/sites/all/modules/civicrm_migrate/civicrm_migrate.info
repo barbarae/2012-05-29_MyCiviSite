@@ -1,0 +1,21 @@
+name = "CiviCRM Migrate"
+description = "Use Migrate framework to migrate into CiviCRM objects"
+package = "Development"
+core = 7.x
+dependencies[] = civicrm
+
+files[] = civicrm_migrate.module
+files[] = plugins/destinations/civicrm_entity.inc
+files[] = plugins/destinations/contact.inc
+files[] = plugins/destinations/event.inc
+files[] = plugins/destinations/contribution.inc
+files[] = plugins/destinations/participant.inc
+files[] = plugins/destinations/membership.inc
+
+version = "7.x-2.x-dev"
+; Information added by drupal.org packaging script on 2012-02-24
+version = "7.x-1.x-dev"
+core = "7.x"
+project = "civicrm_migrate"
+datestamp = "1330042020"
+

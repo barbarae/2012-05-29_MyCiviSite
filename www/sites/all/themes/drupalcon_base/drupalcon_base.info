@@ -1,0 +1,13 @@
+name = "DrupalCon base theme"
+description = "Theme for Drupal.org DrupalCon sites"
+core = 7.x
+engine = phptemplate
+
+stylesheets[all][] = drupalcon_base.css
+
+; Information added by drupal.org packaging script on 2012-05-09
+version = "7.x-1.x-dev"
+core = "7.x"
+project = "drupalcon_base"
+datestamp = "1336600515"
+

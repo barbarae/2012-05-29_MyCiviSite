@@ -1,0 +1,13 @@
+name = Webform Node Element
+description = Webform component that allows users to embed node content in a webform.
+core = 7.x
+package = Webform
+
+dependencies[] = webform
+
+; Information added by drupal.org packaging script on 2012-02-09
+version = "7.x-1.1"
+core = "7.x"
+project = "webform_node_element"
+datestamp = "1328755543"
+

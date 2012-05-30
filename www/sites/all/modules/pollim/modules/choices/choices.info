@@ -1,0 +1,17 @@
+name = Choice field for Poll Improved
+description = Defines simple choice field.
+package = Poll
+version = VERSION
+core = 7.x
+
+dependencies[] = entity
+
+stylesheets[all][] = theme/choices.css
+scripts[] = js/choices.js
+scripts[] = js/jquery.cookie.min.js
+; Information added by drupal.org packaging script on 2011-09-29
+version = "7.x-1.x-dev"
+core = "7.x"
+project = "pollim"
+datestamp = "1317298567"
+

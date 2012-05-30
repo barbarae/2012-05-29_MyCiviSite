@@ -1,0 +1,12 @@
+/**
+ * @file
+ * CSS for contact-importer-js.tpl.php.
+ */
+
+#contact-importer-js {
+  margin: 0;
+  padding: 1em;
+  background: #FFF;
+  color: #000;
+}
+

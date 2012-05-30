@@ -1,0 +1,41 @@
+/* Site status */
+#drupalorg-site-status {
+  background-color: #D32101;
+  color: #FFF;
+  padding: 0.5em;
+  text-align: center;
+  position: relative;
+  box-shadow: 0 2px 2px 1px rgba(68, 68, 68, 0.5);
+  z-index: 1;
+}
+#drupalorg-site-status a {
+  color: #FFF;
+  text-decoration: underline;
+}
+
+/* /sponsors page */
+.view-id-association_sponsors_admin ul {
+  list-style-type: none;
+  overflow: auto;
+}
+.view-id-association_sponsors_admin ul li {
+  margin: 0;
+  float: left;
+  width: 25%;
+  height: 75px;
+  margin: 0 0 20px 0;
+}
+.view-id-association_sponsors_admin .diamond ul li {
+  width: 50%;
+}
+.view-id-association_sponsors_admin .platinum ul li {
+  width: 33%;
+}
+.view-id-association_sponsors_admin .views-field-field-assoc-sponsor-logo-fid {
+  margin: 0 15% 0 0;
+  text-align: center;
+}
+.view-id-association_sponsors_admin img {
+  max-height: 100%;
+  max-width: 100%;
+}

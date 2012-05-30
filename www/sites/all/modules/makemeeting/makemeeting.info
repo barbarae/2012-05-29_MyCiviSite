@@ -1,0 +1,11 @@
+name = Make Meeting
+description = Content type to schedule an event
+core = 7.x
+configure = admin/config/content/makemeeting
+
+; Information added by drupal.org packaging script on 2012-01-31
+version = "7.x-1.0-alpha2"
+core = "7.x"
+project = "makemeeting"
+datestamp = "1328039745"
+

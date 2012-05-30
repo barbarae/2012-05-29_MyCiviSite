@@ -1,0 +1,29 @@
+<?php
+
+/**
+ * @file
+ * The install functions for the openinviter engine
+ */
+
+/**
+ * Implements hook_enable().
+ */
+function openinviter_engine_enable() {
+  contact_importer_cache_clear_all();
+}
+
+/**
+ * Implements hook_disable().
+ */
+function openinviter_engine_disable() {
+  contact_importer_cache_clear_all();
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function openinviter_engine_uninstall() {
+  variable_del('openinviter_engine_transport');
+  variable_del('openinviter_engine_providers_email');
+  variable_del('openinviter_engine_providers_social');
+}

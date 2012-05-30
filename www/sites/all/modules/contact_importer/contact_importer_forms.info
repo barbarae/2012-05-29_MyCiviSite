@@ -1,0 +1,17 @@
+name = Contact Importer Form Integration
+description = Allows you to choose forms to use with Contact Importer.
+dependencies[] = contact_importer
+package = Contact Importer
+core = 7.x
+configure = admin/config/contact_importer/forms/list
+files[] = contact_importer_forms.install
+files[] = contact_importer_forms.module
+
+
+
+; Information added by drupal.org packaging script on 2011-06-30
+version = "7.x-1.1"
+core = "7.x"
+project = "contact_importer"
+datestamp = "1309424516"
+

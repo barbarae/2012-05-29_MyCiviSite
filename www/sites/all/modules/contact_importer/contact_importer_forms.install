@@ -1,0 +1,39 @@
+<?php
+
+/**
+ * @file (un)install routines for contact_importer.
+ */
+
+/**
+ * Implements hook_schema().
+ */
+function contact_importer_forms_schema() {
+  $schema['contact_importer_forms'] = array(
+    'description' => 'Stores a list of forms and fields that Contact Importer should bind to.',
+    'fields' => array(
+      'form_id' => array(
+        'description' => 'The form_id to act upon.',
+        'type' => 'varchar',
+        'length' => '127',
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'field' => array(
+        'description' => 'The field on the given form.',
+        'type' => 'varchar',
+        'length' => '127',
+        'not null' => TRUE,
+        'default' => '',
+      ),
+    ),
+    'primary key' => array('form_id', 'field'),
+  );
+  return $schema;
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function contact_importer_forms_uninstall() {
+  variable_del('contact_importer_form_show_ids');
+}

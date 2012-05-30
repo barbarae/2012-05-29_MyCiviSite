@@ -1,0 +1,457 @@
+<?php
+/**
+ * @file
+ * Provides integration between Registration and Date modules.
+ */
+
+/**
+ * Drupal variable name which holds settings for registration field instances.
+ *
+ * [instance_id][date_field_name][column] = array settings
+ */
+define('REGISTRATION_DATE_FIELD', 'registration_date_field');
+
+/**
+ * Implements hook_date_theme().
+ */
+function registration_date_theme() {
+  return array(
+    'registration_date_field_ui' => array(
+      'render element' => 'form',
+      'file' => 'registration_date.module',
+    ),
+  );
+}
+
+/**
+ * Implement hook_registration_status_alter().
+ * 
+ * @param $entity_type
+ *   The type of entity.
+ * @param $entity_id
+ *   The entity ID.
+ * @param $variables
+ *   Mixed registration settings to alter.
+ */
+function registration_date_registration_status_alter(&$status, $context) {
+  $entity_type = $context['entity_type'];
+  $entity_id   = $context['entity_id'];
+
+  $entities = entity_load($entity_type, array($entity_id));
+
+  if (isset($entities[$entity_id])) {
+    $date_status = registration_date_registration_status($entity_type, $entities[$entity_id]);
+
+    if ($date_status !== NULL) {
+      $status = (boolean)$date_status;
+    }
+  }
+}
+
+/**
+ * Disable opening registrations on registration settings page, if date is in
+ * past.
+ * 
+ * Implements hook_form_FORM_ID_alter().
+ */
+function registration_date_form_registration_entity_settings_form_alter(&$form, &$form_state, $form_id) {
+  if (!isset($form_state['build_info']['args'][0])) {
+    return;
+  }
+
+  $entity_type = $form_state['entity']['entity_type'];
+  $entity_id = $form_state['entity']['entity_id'];
+  $entity = entity_load_single($entity_type, $entity_id);
+  list(, , $bundle) = entity_extract_ids($entity_type, $entity);
+  $settings = _registration_date_get_settings_entity($entity_type, $entity);
+
+  $registration_field_name = _registration_date_registration_field_name($entity_type, $bundle);
+
+  // Disable Registration date fields if necessary
+  if (!empty($settings['#disable_registration_dates'])) {
+    if (empty($form['scheduling']['open']['#default_value'])) {
+      $form['scheduling']['open']['#access'] = FALSE;
+    }
+    if (empty($form['scheduling']['close']['#default_value'])) {
+      $form['scheduling']['close']['#access'] = FALSE;
+    }
+  }
+  
+  // Show date diagnostic table
+  if (!count(element_children($settings))) {
+    return;
+  }
+
+  $header = array(
+    'Label',
+    'Value',
+    'Action',
+    'Active',
+  );
+
+  $action_localization = array(
+    'open' => t('Open'),
+    'close' => t('Close'),
+  );
+
+  $dates = registration_date_registration_dates($entity_type, $entity);
+  $i = 0;
+  $dates_unix = array();
+  foreach ($dates as $date_field_name => $columns) {
+    foreach ($columns as $column_name => $field) {
+      $unix = date_format($field['date'], DATE_FORMAT_UNIX);
+      if (is_numeric($unix) && $unix > 0) {
+        $dates_unix[$unix] = array(
+          'i' => $i,
+          'field_name' => $field['field_name'],
+          'column_name' => $column_name,
+        );
+        $i += 1;
+      }
+    }
+  }
+
+  ksort($dates_unix);
+
+  // Find current applied date
+  $active_field_name = '';
+  foreach ($dates_unix as $unix_date => $field) {
+    if ($unix_date <= time()) {
+      $active_field = $field;
+    }
+    else {
+      break;
+    }
+  }
+
+  $rows = array();
+  foreach ($dates_unix as $unix_date => $field) {
+    $row = array();
+    $field_name = $field['field_name'];
+    $column_name = $field['column_name'];
+    $action = isset($dates[$field_name][$column_name]['settings']['action']) ? $dates[$field_name][$column_name]['settings']['action'] : 'None';
+
+    $instance = field_info_instance($entity_type, $field_name, $bundle);
+
+    $active = t('No');
+    if ($field['i'] == $active_field['i']) {
+      $active = t('Yes');
+    }
+    elseif ($unix_date > 0 && $unix_date <= time()) {
+      $active = t('Overridden');
+    }
+
+    $row[] = array('data' => t('@instance_label (@column)', array(
+      '@instance_label' => $instance['label'],
+      '@column' => $column_name,
+    )));
+    $row[] = array('data' => format_date($unix_date));
+    $row[] = array('data' => isset($action_localization[$action]) ? $action_localization[$action] : $action);
+    $row[] = array('data' => $active);
+
+    $rows[] = $row;
+  }
+
+  $form['scheduling']['registration_date_explain'] = array(
+    '#type' => 'item',
+    '#title' => t('Date fields'),
+    '#markup' => theme('table', array(
+      'header' => $header,
+      'rows' => $rows,
+      'caption' => t('How dates are applied to this registration.'),
+      'empty' => t('No dates have been added to this registration.'),
+    )),
+  );
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ * 
+ * Add field to associate closing date on field UI settings page.
+ * 
+ * Builds grid containing each date field attached to this bundle, and whether
+ * to use each field for opening or closing registrations on the entity.
+ * 
+ * @todo: Offset
+ */
+function registration_date_form_field_ui_field_edit_form_alter(&$form, &$form_state, $form_id) {
+  $instance_id = $form['#instance']['id'];
+  $entity_type = $form['#instance']['entity_type'];
+  $bundle = $form['#instance']['bundle'];
+  $registration_field_name = $form['#instance']['field_name'];
+
+  $settings = variable_get(REGISTRATION_DATE_FIELD, array());
+
+  if ($form['#field']['type'] != 'registration') {
+    return;
+  }
+  
+  $fields = field_info_fields();
+  $date_types = array(DATE_UNIX, DATE_ISO, DATE_DATETIME);
+
+  $options = array(
+    'none' => t('None'),
+    'open' => t('Open'),
+    'close' => t('Closed'),
+  );
+
+  $form['registration_date'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Registration Date'),
+    '#tree' => TRUE,
+  );
+
+  $form['registration_date']['registration_contrib_date'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Disable Registration dates'),
+    '#description' => t('Disable built-in date functionality provided by Registration module. Any existing open and close dates are preserved, and may be edited. No new values are permitted.'),
+    '#default_value' => (!empty($settings[$instance_id]['#disable_registration_dates'])),
+  );
+
+  $form['registration_date']['status']['#theme'] = 'registration_date_field_ui';
+
+  foreach ($fields as $date_field_name => $field) {
+    if (in_array($field['type'], $date_types) && isset($field['bundles'][$entity_type])) {
+      if (in_array($bundle, $field['bundles'][$entity_type])) {
+        foreach (array_keys($field['columns']) as $column) {
+          $instance = field_info_instance($entity_type, $date_field_name, $bundle);
+
+          $form['registration_date']['status']['fields'][$date_field_name][$column] = array(
+            '#label' => t('@label (@column)', array(
+              '@label' => $instance['label'],
+              '@column' => $column,
+            )),
+            '#machine_name' => $date_field_name,
+          );
+
+          $default_value = 'none';
+          if (isset($settings[$instance_id][$date_field_name][$column])) {
+            foreach ($settings[$instance_id][$date_field_name][$column] as $setting) {
+              if (!empty($setting['action'])) {
+                $action = $setting['action'];
+                $default_value = (isset($options[$action])) ? $action : 'none';
+              }
+            }
+          }
+
+          $form['registration_date']['status']['radios'][$date_field_name][$column] = array(
+            '#type' => 'radios',
+            '#options' => $options,
+            '#default_value' => $default_value,
+          );
+        }
+      }
+    }
+  }
+
+  $form['#submit'][] = 'registration_date_field_ui_submit';
+}
+
+/**
+ * Process submission for form elements in 
+ * registration_date_form_field_ui_field_edit_form_alter().
+ */
+function registration_date_field_ui_submit(&$form, &$form_state) {
+  $instance_id = $form['#instance']['id'];
+  $entity_type = $form['#instance']['entity_type'];
+  $bundle = $form['#instance']['bundle'];
+  $registration_field_name = $form['#instance']['field_name'];
+
+  $settings = variable_get(REGISTRATION_DATE_FIELD, array());
+  $settings[$instance_id] = array();
+
+  // Disable Registration dates
+  $settings[$instance_id]['#disable_registration_dates'] = (boolean)$form_state['values']['registration_date']['registration_contrib_date'];
+
+  // Open/Close field mapping
+  if (!empty($form_state['values']['registration_date']['status']['radios'])) {
+    foreach ($form_state['values']['registration_date']['status']['radios'] as $date_field_name => $date_field_columns) {
+      foreach ($date_field_columns as $column_name => $action) {
+        $setting = array();
+        if ($action != 'none') {
+          $setting = array(
+            'action' => $action,
+          );
+        }
+        $settings[$instance_id][$date_field_name][$column_name][] = $setting;
+      }
+    }
+  }
+
+  variable_set(REGISTRATION_DATE_FIELD, $settings);
+}
+
+function theme_registration_date_field_ui($variables) {
+  $form = $variables['form'];
+  $rows = array();
+
+  foreach (element_children($form['fields']) as $field_name) {
+    foreach (element_children($form['fields'][$field_name]) as $column_name) {
+      // Field description
+      $row = array(
+        array(
+          'data' => $form['fields'][$field_name][$column_name]['#label'],
+        ),
+        array(
+          'data' => $form['fields'][$field_name][$column_name]['#machine_name'],
+        )
+      );
+      // Each radio for a field.
+      foreach (element_children($form['radios'][$field_name][$column_name]) as $column_key) {
+        $form['radios'][$field_name][$column_name][$column_key]['#title_display'] = 'invisible';
+        $row[] = array(
+          'data' => drupal_render($form['radios'][$field_name][$column_name][$column_key]),
+        );
+      }
+      $rows[] = $row;
+    }
+  }
+
+  $header = array(
+    'Label',
+    'Name',
+    'None',
+    'Open',
+    'Close',
+  );
+
+  return theme('table', array(
+    'header' => $header,
+    'rows' => $rows,
+    'caption' => t('Automatically open or close registration for entities based on values of Date fields.'),
+    'empty' => t('Please add a date field to this bundle.'),
+  )) . drupal_render_children($form);
+}
+
+/**
+ * Determine if Registrations should be opened, or closed for an entity.
+ * 
+ * Field values for each date field set in configuration are fetched and 
+ * ordered. Whichever date is last, nonzero and in the past, is the new status.
+ * 
+ * @param $entity_type
+ *   The type of entity.
+ * @param $entity
+ *   The entity object.
+ */
+function registration_date_registration_status($entity_type, $entity) {
+  list(, , $bundle) = entity_extract_ids($entity_type, $entity);
+  $actions = array('open', 'close'); // Filter for these actions
+
+  if (_registration_date_registration_field_name($entity_type, $bundle)) {
+    $dates_unix = array(); // unix_time => open/close
+
+    $dates = registration_date_registration_dates($entity_type, $entity);
+    
+    foreach ($dates as $date_field_name => $columns) {
+      foreach ($columns as $column_name => $field) {
+        $unix = date_format($field['date'], DATE_FORMAT_UNIX);
+
+        if (!empty($unix) && is_numeric($unix) && $unix <= time()) {
+          if (isset($field['settings']['action']) && in_array($field['settings']['action'], $actions)) {
+            $dates_unix[$unix] = $field['settings']['action'];
+          }
+        }
+      }
+    }
+
+    ksort($dates_unix);
+
+    if ($action = end($dates_unix)) {
+      if ($action == 'open') {
+        return TRUE;
+      }
+      elseif ($action == 'close') {
+        return FALSE;
+      }
+    }
+  }
+}
+
+/**
+ * Get all dates for a registration entity.
+ * 
+ * @param $entity_type
+ *   The type of entity.
+ * @param $entity
+ *   The entity object.
+ */
+function registration_date_registration_dates($entity_type, $entity) {
+  $dates = array();
+
+  $settings_all = _registration_date_get_settings_entity($entity_type, $entity);
+
+  foreach (element_children($settings_all) as $date_field_name) {
+    foreach ($settings_all[$date_field_name] as $column_name => $settings) {
+      foreach ($settings as $setting) {
+        $field_info = field_info_field($date_field_name);
+        $format = date_type_format($field_info['type']);
+
+        if (isset($entity->{$date_field_name}[LANGUAGE_NONE][0])) {
+          $field_value = $entity->{$date_field_name}[LANGUAGE_NONE][0];
+          $dates[$date_field_name][$column_name] = array(
+            'date' => new DateObject($field_value[$column_name], $field_value['timezone_db'], $format),
+            'field_name' => $date_field_name,
+            'settings' => $setting,
+          );
+        }
+      }
+    }
+  }
+
+  return $dates;
+}
+
+/**
+ * Get the field_name of registration field attached to entity.
+ * 
+ * @param $entity_type
+ *   The type of entity.
+ * @param $entity
+ *   The entity object.
+ * 
+ * @return
+ *   field_name. Or FALSE.
+ */
+function _registration_date_registration_field_name($entity_type, $bundle) {
+  $field_names = &drupal_static(__FUNCTION__);
+
+  if (isset($field_names[$entity_type][$bundle])) {
+    return $field_names[$entity_type][$bundle];
+  }
+
+  $fields = field_info_fields();
+
+  foreach ($fields as $field_name => $field) {
+    if ($field['type'] == 'registration' && isset($field['bundles'][$entity_type])) {
+      if (in_array($bundle, $field['bundles'][$entity_type])) {
+        return $field_names[$entity_type][$bundle] = $field_name;
+      }
+    }
+  }
+
+  return FALSE;
+}
+
+function _registration_date_get_settings($entity_type, $bundle, $registration_field_name) {
+  $instance = field_info_instance($entity_type, $registration_field_name, $bundle);
+  $settings = variable_get(REGISTRATION_DATE_FIELD, array());
+
+  if (!empty($instance['id'])) {
+    $id = $instance['id'];
+    if (isset($settings[$id])) {
+      return $settings[$id] + array(
+        '#instance' => $instance,
+      );
+    }
+    else {
+      return FALSE;
+    }
+  }
+}
+
+function _registration_date_get_settings_entity($entity_type, $entity) {
+  list(, , $bundle) = entity_extract_ids($entity_type, $entity);
+  $registration_field_name = _registration_date_registration_field_name($entity_type, $bundle);
+  return _registration_date_get_settings($entity_type, $bundle, $registration_field_name);
+}

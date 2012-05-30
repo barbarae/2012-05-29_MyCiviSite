@@ -1,0 +1,15 @@
+
+name = Udid Dummy Datasource
+description = "Provides a Udid dummy datasource."
+dependencies[] = udid
+package = Content
+core = 7.x
+
+files[] = udid_dummy.module
+
+; Information added by drupal.org packaging script on 2011-12-20
+version = "7.x-1.0-beta1"
+core = "7.x"
+project = "datasources"
+datestamp = "1324386638"
+

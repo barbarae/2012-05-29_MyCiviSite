@@ -1,0 +1,707 @@
+<?php
+/**
+ * @file
+ * adds sirsi_elibrary_search features to drupal
+ *
+ * For Drupal 7
+ *
+ * Adds blocks and other features to search 
+ * a Sirsi e-Library catalog from Drupal.
+ *
+ */
+
+/**
+ * Implements hook_perm().
+ */
+function e_library_search_permission() {
+    return array(
+      'title' => 'administer e-library search module settings',
+      'description' => t('Configure e-Library search module settings'),
+    );
+}
+
+/**
+ * Implements hook_menu().
+ */
+function e_library_search_menu() {
+    return array(
+    // Administer >> Site configuration >> e-Library Settings
+    'admin/config/search/elibrary' => array(
+    'title' => 'e-Library Search Settings',
+    'description' => 'Edit configuration options for e-Library.',
+    'access arguments' => array('administer e-library search module settings'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('e_library_search_admin_settings'),
+    'menu_name' => 'search',
+    ),
+  );
+}
+
+/**
+ * Menu callback to provide the admin settings form.
+ */
+function e_library_search_admin_settings() {
+  $form = array();
+  // Server Options
+  $form['elibserver'] = array(
+    '#type'        => 'fieldset',
+    '#title'       => t('e-Library Web Server Information'),
+    '#collapsible' => TRUE,
+    '#collapsed'   => FALSE,
+    '#description' => t('Configuration options needed for linking to your e-Library server.'),
+  );
+
+  $form['elibserver']['e_library_search_base_url'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Base URL to cgisirsi'),
+    '#description' => t('The fully qualified URL to your elibrary server. (Do not include the trailing slash.)'),
+    '#default_value' => variable_get('e_library_search_base_url', 'http://server.example.com/uhtbin/cgisirsi'),
+    '#element_validate' => array('e_library_search_base_url_validate'),
+  );  
+  $form['elibserver']['e_library_search_default_library'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Library Policy Name'),
+    '#maxlength' => 10,  //Symphony policy names can be no longer than 10 characters.
+    '#size' => 10,
+    '#description' => t('The default library policy name used to search'),
+    '#default_value' => variable_get('e_library_search_default_library', 'ARROWOOD'),
+  );  
+  $form['elibserver']['e_library_search_default_user'] = array(
+    '#type' => 'textfield',
+    '#title' => t('OPAC user'),
+    '#maxlength' => 20,  //Symphony user accounts can be no longer than 20 characters.
+    '#size' => 20,        
+    '#description' => t('The default user ID to use to perform a search'),
+    '#default_value' => variable_get('e_library_search_default_user', 'WEBSERVER'),
+  );  
+  $form['elibserver']['e_library_search_default_password'] = array(
+    '#type' => 'textfield', //Did not use a password field for this value because SirsiDynix transmits this value in the open, and ocassionally includes it in raw HTML.
+    '#title' => t('OPAC Password'),
+    '#maxlength' => 10,  //Symphony passwords can be no longer than 10 characters.
+    '#size' => 10,    
+    '#description' => t('The default password to use to perform a search'),
+    '#default_value' => variable_get('e_library_search_default_password', 'guest'),
+  );  
+  $form['elibserver']['e_library_use_curl'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Use CURL to hide search parameters'),      
+    '#description' => t('This will prevent login information, and other search parameters from displaying in the URL.  This is still experimental and may not work in your environment.'),
+  );  
+  
+  //Disable the CURL option if the server does not have the CURL extension
+  if (function_exists('curl_init')) {  
+    $form['elibserver']['e_library_use_curl']['#default_value'] = variable_get('e_library_use_curl', FALSE);
+  }
+  else {
+    $form['elibserver']['e_library_use_curl']['#default_value'] = FALSE;
+    $form['elibserver']['e_library_use_curl']['#disabled'] = TRUE;
+  }
+  $form['block_options'] = array(
+    '#type'        => 'fieldset',
+    '#title'       => t('Block Options'),
+    '#collapsible' => TRUE,
+    '#collapsed'   => FALSE,
+    '#description' => t('Configuration options for e-Library related blocks in Drupal.'),
+  );
+  $form['block_options']['e_library_search_count'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Number of Blocks'),
+    '#description' => t('How many unique search blocks will you need.'),
+    '#default_value' => variable_get('e_library_search_count', '1'),
+    '#element_validate' => array('e_library_search_count_validate'),
+    '#maxlength' => 4,  //Sanity check, I can't imageine a situation where you woudl ever need more then 9999 search blocks.
+    '#size' => 4,     
+  );
+  return system_settings_form($form);
+}
+
+/**
+ * Validate the block count input on the admin form.
+ *
+ * @param $element
+ *   An array containing the attributes of the form element
+ * @param &$form_state
+ *   A reference to the current form state
+ * 
+ */
+function e_library_search_base_url_validate($element, &$form_state) {  
+  if (empty($element['#value'])) {  
+    form_error($element, t('Base URL cannot be empty.'));  
+  } 
+  else {
+    if ( drupal_substr($element['#value'], -1, 1) == '/' ) {
+      form_error($element, t('Do not include the trailing backslash.'));  
+    }
+  }
+} 
+
+/**
+ * Validate the block count input on the admin form.
+ *
+ * @param $element
+ *   An array containing the attributes of the form element
+ * @param &$form_state
+ *   A reference to the current form state
+ * 
+ */
+function e_library_search_count_validate($element, &$form_state) {  
+  if (empty($element['#value'])) {  
+        form_error($element, t('Block count cannot be empty.'));  
+  } 
+  else {  
+    if (!(is_numeric($element['#value']) && $element['#value'] > 0)) {
+      form_error($element, t('You must enter a numeric value greater than 0.'));  
+    }
+  }
+} 
+/**
+ * Validate the block count input on the admin form.
+ *
+ * @param $element
+ *   An array containing the attributes of the form element
+ * @param &$form_state
+ *   A reference to the current form state
+ * 
+ */
+function e_library_search_index_list_validate($element, &$form_state) {
+  if (empty($element['#value'])) {  
+        form_error($element, t('Search index cannot be empty.'));  
+  } 
+
+  $i = 1;
+  foreach (explode("\n", $element['#value']) as $index_item) {
+
+    $hat_count = function_exists('mb_substr_count') ? mb_substr_count($index_item, '^') : substr_count($index_item, '^'); // Use MB aware checks in case of Unicode capable library
+    if ($hat_count <> 4 ) {
+      form_error($element, t('Invalid index string on line %line. See example for proper formatting.', array('%line' => $i)));  
+    }
+    else {
+      list ($entry, $type, $thesaurus, $special, $description) = explode ('^', $index_item);
+
+      if ( !e_library_search_symphony_policy_check($entry) ) {
+        form_error($element, t('Invalid keyword index policy on line %line', array('%line' => $i)));  
+      }
+      if ( !e_library_search_symphony_policy_check($type) ) {
+        form_error($element, t('Invalid browse index policy on line %line', array('%line' => $i)));  
+      }
+      if ( !e_library_search_symphony_policy_check($thesaurus) ) {
+        form_error($element, t('Invalid authority thesaurus policy on line %line', array('%line' => $i)));  
+      }
+    }
+    $i++;
+  }
+}
+
+/**
+ * Implements hook_theme().
+ */
+function e_library_search_theme($existing, $type, $theme, $path) {
+  return array(
+    'e_library_search' => array(
+      'variables' => array('form' => NULL, 'conf' => NULL),
+      'render element' => 'form',
+      'template' => 'e_library_search_form',
+    )
+  );
+}
+
+/**
+ * Implements hook_forms().
+ */
+function e_library_search_forms($form_id, $args) {
+
+  //Check if the form_id passed to drupal_get_form() contains the string 'e_library_search_form' 
+  if (strpos($form_id, 'e_library_search_form') !== FALSE) {
+    //Lets attach e_library_search_form to $forms[$form_id].  This effectively allows you to use the same form builder function to build a form with any form_id of your choice.
+    $forms[$form_id] = array(
+      'callback' => 'e_library_search_form_builder',
+      );
+    return $forms;
+  }
+}
+
+/**
+ * Element builder for the catalog search form sort element.
+ *
+ * @param $default
+ *   The default value
+ * @param $type
+ *   The type of element to use, radio or selection box
+ *
+ */
+function e_library_search_form_element_sort($default, $type='radios') {
+
+  $options = array(
+    'NONE' => t('Unsorted'), 
+    'AU'   => t('Author'),
+    'SU'   => t('Subject'),
+    'TI'   => t('Title'),
+    'relevance' => t('Relevance'), 
+    'PBYR' => t('Year Published (Ascending)'), 
+    '-PBYR' => t('Year Published (Descending)'),
+  );
+
+  $element = array(
+    '#type' => $type,
+    '#title' => t('Sort Order'),
+    '#options' => $options,
+    '#default_value' => $default,
+  );
+  return ($element);
+}
+
+/**
+ * Form builder for the catalog search form.
+ *
+ * @param $data
+ *
+ * @param $conf
+ *   The configuration data used for default values 
+ *
+ */
+function e_library_search_form_builder($form, &$form_state, $conf) {
+  $form = array();
+
+  $form['search_terms'] = array(
+    '#title' => e_library_search_translate('block:' . $conf['delta'] . ':search_label', $conf['elibrary_search_label']),
+    '#type' => 'textfield',
+    '#size' => 25,
+    '#maxlength' => 255,    
+
+  );
+
+  if ( variable_get('e_library_search_' . $conf['delta'] . '_index_visible', FALSE)  ) {  
+    
+    $form['search_index'] =  array(
+      '#type' => 'select',
+      '#title' => '',
+      '#options' => $conf['elibrary_index_list'],
+    );
+  }
+
+  if ( variable_get('e_library_search_' . $conf['delta'] . '_sort_visibile', FALSE)  ) {  
+    $form['sort'] = e_library_search_form_element_sort( variable_get('e_library_search_' . $conf['delta'] . '_sort', 'NONE'), 'select' );
+  }
+
+  $form['delta_checksum'] = array(
+      '#type'  => 'value',
+      '#value' => sha1($conf['delta'] . drupal_get_private_key() ),
+  );  
+
+  $form_state['storage']['delta'] = $conf['delta'];
+  
+  $form['submit'] = array(
+    '#type'  => 'submit',
+    '#value' => t('Search'),
+    '#id'    => 'elibrary-submit-' . $conf['delta'],
+  );
+
+
+  $form['#submit'][] = 'e_library_search_form_submit';
+  return $form;
+
+}
+
+/**
+ * Implements hook_form_alter().
+ *
+ * This function should prevent validation errors due to invalid checksums
+ */
+function e_library_search_form_alter(&$form, &$form_state, $form_id) {
+  switch ($form_id) {
+    case 'search_terms':
+      $form_state['rebuild'] = TRUE;
+    break;
+  }
+}
+
+/**
+ * Form submission handler for e_library_search_form().
+ *
+ * @see e_library_search_form()
+ */
+function e_library_search_form_submit($form, $form_state) {
+  // Security: Make sure there is no issue with someone sending an invalid delta
+  if ($form_state['values']['delta_checksum'] != sha1($form_state['storage']['delta'] . drupal_get_private_key() ) ) {
+    drupal_access_denied();
+  }
+
+  // Build the form URL
+  $url      = variable_get('e_library_search_base_url', 'http://server.example.com/uhtbin/cgisirsi');
+  $policy   = variable_get('e_library_search_' . $form_state['storage']['delta'] . '_library_policy', variable_get('e_library_search_default_library', 'ARROWOOD'));
+
+  $query = array();
+
+  //Provide the forms sort option if used, otherwise use the default set in the block configuration.
+  if ( isset ($form_state['values']['sort']) && !empty($form_state['values']['sort']) ) {
+    $query['sort_by'] = $form_state['values']['sort'];
+  }
+  else {
+    $query['sort_by'] = variable_get('e_library_search_' . $form_state['storage']['delta'] . '_sort', 'NONE');
+  }
+//dpm ($form_state['storage']['delta']);
+  //Translate the numeric value for the search index back into the proper value for eLibrary
+  $index_value = explode("\n", variable_get('e_library_search_' . $form_state['storage']['delta'] . '_index_list', "GENERAL^SUBJECT^GENERAL^^words or phrase\nAU^AUTHOR^AUTHORS^Author Processing^author\nTI^TITLE^SERIES^Title Processing^title\nSU^SUBJECT^SUBJECTS^^subject\nSER^SERIES^SERIES^Title Processing^series\nPER^PERTITLE^SERIES^Title Processing^periodical title"));
+  
+  if ( isset ($form_state['values']['search_index']) && !empty($form_state['values']['search_index']) ) {
+    $query['srchfield1'] = $index_value[ $form_state['values']['search_index'] ];
+  }  
+  
+  $query['item_type'] = variable_get('e_library_search_' . $form_state['storage']['delta'] . '_item_type', 'ANY');
+  $query['user_id']  = variable_get('e_library_search_' . $form_state['storage']['delta'] . '_user', variable_get('e_library_search_default_user', 'WEBSERVER'));
+  $query['password'] = variable_get('e_library_search_' . $form_state['storage']['delta'] . '_password', variable_get('e_library_search_default_password', 'guest'));
+  $query['searchdata1']  = $form_state['values']['search_terms'];
+
+  //Submit the request to e-Library
+  if ( function_exists('curl_init') && variable_get('e_library_use_curl', TRUE) == TRUE ) {
+    e_library_search_curl_goto(sprintf('%s/x/%s/0/57/5', $url, check_plain($policy)), $query);
+  }
+  else {
+  drupal_goto(sprintf('%s/x/%s/0/57/5', $url, check_plain($policy)), array('query' => $query));
+  }
+  
+}
+
+/**
+ * Implements hook_block_configure().
+ *
+ * This hook declares configuration options for blocks provided by this module.
+ */
+function e_library_search_block_configure($delta = 0) {
+  $form = array();
+
+  $form['block_admin_title'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Block Administration Title'),
+    '#description' => t('The title to describe this block on the block administration screen.'),
+    '#default_value' => variable_get('e_library_search_' . $delta . '_admin_title', 'e-Library Search Block ' . $delta),
+  );
+
+  $form['server_options'] = array(
+    '#type'        => 'fieldset',
+    '#title'       => t('Server Options'),
+    '#collapsible' => TRUE,
+    '#collapsed'   => FALSE,
+    '#description' => t('Server configuration options for e-Library.'),
+  );
+
+  $form['server_options']['elibrary_library_policy'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Library gateway policy'),
+    '#maxlength' => 10,  //Symphony policy names can be no longer than 10 characters.
+    '#size' => 10,        
+    '#description' => t('The library gateway policy to be used for this search block.'),
+    '#default_value' => variable_get('e_library_search_' . $delta . '_library_policy', variable_get('e_library_search_default_library', 'ARROWOOD')),
+  );
+
+  $form['server_options']['elibrary_user'] = array(
+    '#type' => 'textfield',
+    '#title' => t('OPAC Generic User'),
+    '#maxlength' => 20,  //Symphony user accounts can be no longer than 20 characters.
+    '#size' => 20,        
+    '#description' => t('The default user ID to use to perform a search'),
+    '#default_value' => variable_get('e_library_search_' . $delta . '_user', variable_get('e_library_search_default_user', 'WEBSERVER')),
+  );
+
+  $form['server_options']['elibrary_password'] = array(
+    '#type' => 'textfield',
+    '#title' => t('OPAC Generic password'),
+    '#maxlength' => 10,  //Symphony policy names can be no longer than 10 characters.
+    '#size' => 10,
+    '#description' => t('The default password to use to perform a search'),
+    '#default_value' => variable_get('e_library_search_' . $delta . '_password', variable_get('e_library_search_default_password', 'guest')),
+  );
+    
+  $form['server_options']['elibrary_item_type'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Material Filter'),
+    '#default_value' => variable_get('e_library_search_' . $delta . '_item_type', 'ANY'),
+    '#description' => t('Specify an item type limiter for this search.<br/>Example: BOOK OR REF-BOOK'),
+  );
+
+  $form['form_options'] = array(
+    '#type'        => 'fieldset',
+    '#title'       => t('Form Options'),
+    '#collapsible' => TRUE,
+    '#collapsed'   => FALSE,
+    '#description' => t('Search form options'),
+  );
+
+  $form['form_options']['elibrary_sort'] = array(
+    '#type'        => 'fieldset',
+    '#title'       => t('Sort Options'),
+    '#collapsible' => TRUE,
+    '#collapsed'   => FALSE,
+  );    
+
+  $form['form_options']['elibrary_sort']['elibrary_sort_visible'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Display Sort Options'),
+    '#default_value' => variable_get('e_library_search_' . $delta . '_sort_visible', FALSE),
+    '#description' => t('Should end users be allowed to select sort options?'),      
+  );
+
+  $form['form_options']['elibrary_sort']['elibrary_sort_order'] = e_library_search_form_element_sort( variable_get('e_library_search_' . $delta . '_sort', '-PBYR'));
+
+
+  $form['form_options']['elibrary_index'] = array(
+    '#type'        => 'fieldset',
+    '#title'       => t('Index Options'),
+    '#collapsible' => TRUE,
+    '#collapsed'   => FALSE,
+  );    
+
+  $form['form_options']['elibrary_index']['elibrary_index_visible'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Display Index Options'),
+    '#default_value' => variable_get('e_library_search_' . $delta . '_index_visible', FALSE),
+    '#description' => t('Should the option to select a search index be visible for this block?'),
+  );
+
+  $form['form_options']['elibrary_index']['elibrary_index_list'] = array(
+    '#type' => 'textarea',
+    '#title' => t('Index List'),
+    '#description' => t("This is the list of search indexes to choose from. One per line. For example:<br/> GENERAL^SUBJECT^GENERAL^^words or phrase<br/>TI^TITLE^SERIES^Title Processing^title"),
+    '#default_value' => variable_get('e_library_search_' . $delta . '_index_list', "GENERAL^SUBJECT^GENERAL^^words or phrase\nAU^AUTHOR^AUTHORS^Author Processing^author\nTI^TITLE^SERIES^Title Processing^title\nSU^SUBJECT^SUBJECTS^^subject\nSER^SERIES^SERIES^Title Processing^series\nPER^PERTITLE^SERIES^Title Processing^periodical title"),
+    '#element_validate' => array('e_library_search_index_list_validate'),    
+  );    
+
+
+  $form['form_options']['elibrary_search_label'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Search Label'),
+    '#description' => t('The label to be displayed next to the search box.'),
+    '#default_value' => variable_get('e_library_search_' . $delta . '_search_label', 'Search the catalog'),
+  );
+
+  return $form;    
+}
+
+/**
+ * Implements hook_block_save().
+ *
+ * This hook declares how the configured options for a block
+ * provided by this module are saved.
+ */
+function e_library_search_block_save($delta = 0, $edit = array()) {
+  variable_set('e_library_search_' . $delta . '_admin_title', $edit['block_admin_title']);
+  variable_set('e_library_search_' . $delta . '_label', $edit['elibrary_search_label']);
+  variable_set('e_library_search_' . $delta . '_index_list', $edit['elibrary_index_list']);
+  variable_set('e_library_search_' . $delta . '_library_policy', $edit['elibrary_library_policy']);
+  variable_set('e_library_search_' . $delta . '_item_type', $edit['elibrary_item_type']);
+  variable_set('e_library_search_' . $delta . '_user', $edit['elibrary_user']);
+  variable_set('e_library_search_' . $delta . '_password', $edit['elibrary_password']);
+  variable_set('e_library_search_' . $delta . '_sort', $edit['elibrary_sort_order']);    
+  variable_set('e_library_search_' . $delta . '_sort_visibile', $edit['elibrary_sort_visible']);
+  variable_set('e_library_search_' . $delta . '_index_visible', $edit['elibrary_index_visible']);    
+
+  if ( function_exists('i18nstrings') ) {
+    $i = 0;
+    $pairs= array();
+    foreach (explode("\n", $edit['elibrary_index_list']) as $search_term) {
+      $i++;
+      list ($entry, $type, $thesaurus, $special, $description) = explode ('^', $search_term);
+      i18nstrings_update('elibrary:block:1:index' . $i, $description);  
+    }
+    i18nstrings_update('elibrary:block:' . $delta . ':search_label', $edit['elibrary_search_label']);  
+  }
+}
+
+/**
+ * Implements hook_block_info().
+ *
+ * This hook declares what blocks are provided by the module.
+ */
+function e_library_search_block_info() {
+      for ($i = 1; $i <= variable_get('e_library_search_count', '1'); $i++) {
+        $blocks[$i]['info'] = variable_get('e_library_search_' . $i . '_admin_title', 'e-Library Search Block ' . $i);
+        $blocks[$i]['cache'] = DRUPAL_NO_CACHE; // default
+      }
+    return $blocks;
+
+}
+
+/**
+ * Implements hook_block_view().
+ *
+ * This hook generates the contents of the blocks themselves.
+ */
+function e_library_search_block_view($delta = 0) {
+  $value = variable_get('e_library_search_' . $delta . '_index_list', "GENERAL^SUBJECT^GENERAL^^words or phrase\nAU^AUTHOR^AUTHORS^Author Processing^author\nTI^TITLE^SERIES^Title Processing^title\nSU^SUBJECT^SUBJECTS^^subject\nSER^SERIES^SERIES^Title Processing^series\nPER^PERTITLE^SERIES^Title Processing^periodical title");
+  $i = 0;
+  $pairs = array();
+  foreach (explode("\n", $value) as $search_term) {
+    $i++;
+    list ($entry, $type, $thesaurus, $special, $description) = explode ('^', $search_term);
+    $pairs[$i - 1] = e_library_search_translate('block:' . $delta . ':index', $description);  
+  }
+  $conf = array();
+  $conf['delta']                    = $delta;
+  $conf['elibrary_index_list']      = $pairs;
+  $conf['elibrary_search_label']    = t(variable_get('e_library_search_' . $delta . '_label', 'Search the catalog'));
+  $block['content'] = drupal_get_form('e_library_search_form_' . $delta, $conf);
+
+  //$block['content'] = theme('e_library_search', array('form' => drupal_get_form('e_library_search_form', $conf), 'conf' => $conf));
+  return $block;
+}
+
+/**
+ * Implements hook_locale().
+ */
+function e_library_search_locale($op = 'groups', $group = NULL) {
+  switch ($op) {
+    case 'groups':  // This is the standard hook_locale() as defined by Drupal core, to define 'text groups'
+      return array('elibrary' => t('e-Library'));
+
+    case 'info':  // This is i18n extension, optional, to define some more properties
+      // Optional refresh callback to update this module's strings at once
+      $info['elibrary']['refresh callback'] = 'e_library_search_locale_refresh';
+      // This tells 'i18nstrings' that this module's strings have no input format applied
+      $info['elibrary']['format'] = FALSE;
+      return $info;
+  }
+}
+
+/**
+ * Provide i18n with a listing of all user defined strings.
+ *
+ * @return bool
+ *   Always returns TRUE, to notify i18n that we have provided all user defined strings
+ */
+function e_library_search_locale_refresh() {
+
+  for ($delta=1; $delta <= variable_get('e_library_search_count', 1); $delta++) {
+    $i = 0;
+    $pairs= array();
+    foreach (explode("\n", variable_get('e_library_search_' . $delta . '_index_list', "GENERAL^SUBJECT^GENERAL^^words or phrase\nAU^AUTHOR^AUTHORS^Author Processing^author\nTI^TITLE^SERIES^Title Processing^title\nSU^SUBJECT^SUBJECTS^^subject\nSER^SERIES^SERIES^Title Processing^series\nPER^PERTITLE^SERIES^Title Processing^periodical title") ) as $search_term) {
+      $i++;
+      list ($entry, $type, $thesaurus, $special, $description) = explode ('^', $search_term);
+      i18nstrings_update('elibrary:block:' . $delta . ':index:' . $i, $description);  
+    }
+    i18nstrings_update('elibrary:block:' . $delta . ':search_label', variable_get('e_library_search_' . $delta . '_label', ''));  
+  }
+  return TRUE;
+}
+
+/**
+ * Get translation for user defined string if i18n is available.
+ *
+ * This function is intended to return translations for plain strings that have NO input format
+ *
+ * @param $name
+ *   Location glued with ':'
+ * @param $string
+ *   String in default language
+ * @param $langcode
+ *   Language code to get translation for
+ * @param $textgroup
+ *   Optional text group to make location data easier
+ */
+function e_library_search_translate($name, $string, $langcode = NULL, $textgroup = 'elibrary') {
+  $result = function_exists('i18nstrings') ? i18nstrings($textgroup . ':' . $name, $string, $langcode) : $string; 
+  return check_plain( $result );
+}
+
+/**
+ * Function to check the validity of a Symphony policy name.  This only performs basic
+ *  checks on the policy name, it does not check to see if the policy actually exisits 
+ *  on the symphony server.
+ *
+ * @param $policy_name
+ *   A string containing the policy name
+ * @param $length (optional) 
+ *   An optional integer value specifying the length of the policy.
+ *   Most policy names are limited to 10 characters, ocassionally this is not the case. 
+ * @return BOOL
+ *   Returns TRUE if the policy is valid, FALSE if not
+ *
+ */
+function e_library_search_symphony_policy_check($policy_name, $length = 10) {
+  if (drupal_strlen($policy_name) > $length || drupal_strlen($policy_name) == 0) {
+    return FALSE;
+  }
+  else {
+    return TRUE;
+  }
+}
+
+
+/**
+ * Function to transmit form submissions via POST instead of GET
+ *
+ * @param $url
+ *   A string containing the url to fetch and display
+ * @param $query (optional) 
+ *   An optional string or array containing the query to pass to the URL
+ *
+ * @return BOOL
+ *   Returns FALSE if the page was unable to be fetched for some reason.  Ouputs the page content if it was able to be fetched.
+ */
+function e_library_search_curl_goto($url, $query) {
+  // Only execute this function of CURL is installed.
+  if (function_exists('curl_init')) {
+    if (is_array($query)) {
+      //e-Library only accepts form data as application/x-www-form-urlencoded so we must not pass curl an array.
+      $data = '';
+      foreach ($query as $key => $value ) {
+        if ($data <> '') {
+          $data .= '&';
+        }
+        $data .= $key . '=' . urlencode($value);
+      }
+    }
+    else {
+      //assume we have been passed a valid text string for the query, and ignore it
+      $data = $query;
+    }
+
+    //Initalize the CURL library, and set our options    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, TRUE); 
+    curl_setopt($ch, CURLOPT_FORBID_REUSE, TRUE);
+    curl_setopt($ch, CURLOPT_HEADER, FALSE);
+    curl_setopt($ch, CURLOPT_POST, TRUE);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
+
+    $output = curl_exec($ch);
+    $info = curl_getinfo($ch);
+    curl_close($ch);
+
+    if ($info['http_code'] == 200 ) {
+      // we have received a valid responsse from the e-Library server, display it and hope for the best
+      print $output;
+      drupal_exit();
+    } 
+    else {
+      //we received some error result back from our HTTP request and will be unable to continue
+      drupal_set_message(t('Unable to contact the e-Library server at this time. Please try your search again later. (Error: %error)', array('%error' => $info['http_code'])));
+      return FALSE;      
+    }
+  }
+  else {
+    drupal_set_message(t('PHP CURL library not installed'), 'warning');
+    return FALSE;
+  }
+}
+
+function template_preprocess_e_library_search_block_form(&$variables) {
+dpm('IM HERE');
+  $variables['search'] = array();
+  $hidden = array();
+  // Provide variables named after form keys so themers can print each element independently.
+  foreach (element_children($variables['form']) as $key) {
+    $type = $variables['form'][$key]['#type'];
+    if ($type == 'hidden' || $type == 'token') {
+      $hidden[] = drupal_render($variables['form'][$key]);
+    }
+    else {
+      $variables['search'][$key] = drupal_render($variables['form'][$key]);
+    }
+  }
+  // Hidden form elements have no value to themers. No need for separation.
+  $variables['search']['hidden'] = implode($hidden);
+  // Collect all form elements to make it easier to print the whole form.
+  $variables['search_form'] = implode($variables['search']);
+}

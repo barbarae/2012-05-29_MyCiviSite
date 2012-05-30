@@ -1,0 +1,31 @@
+<?php
+// $Id$
+/**
+ * @file
+ * Schema definition for the contact_cc module.
+ */
+
+/**
+ * Implements hook_schema().
+ */
+function contact_cc_schema() {
+  $schema['contact_cc'] = array(
+    'description' => 'Contact form CC and BCC recipients',
+    'fields' => array(
+      'cid' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'Category ID'
+      ),
+      'contact_cc_data' => array(
+        'type' => 'text',
+        'not null' => TRUE,
+        'size' => 'big',
+        'description' => 'Serialized array of recipients'
+      )
+    ),
+    'primary key' => array('cid'),
+  );
+  return $schema;
+}

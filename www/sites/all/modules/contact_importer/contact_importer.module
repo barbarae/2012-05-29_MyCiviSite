@@ -1,0 +1,1006 @@
+<?php
+
+/**
+ * @file
+ * Contact Importer.
+ *
+ * Enables other modules to allow users to import email addresses from their address book.
+ */
+
+/**
+ * Implements hook_permission().
+ */
+function contact_importer_permission() {
+  return array(
+    'access contact importer' => array(
+      'title' => t('access contact importer'),
+      'description' => t('May use Contact Importer to fetch contacts from their email account.'),
+    ),
+    'administer contact importer' => array(
+      'title' => t('administer contact importer'),
+      'description' => t('May configure Contact Importer.'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_menu().
+ */
+function contact_importer_menu() {
+  $items = array();
+
+  // Admin
+  $items['admin/config/services/contact_importer'] = array(
+    'title' => 'Contact Importer',
+    'page callback' => 'contact_importer_info',
+    'access arguments' => array('administer contact importer'),
+    'file' => 'contact_importer.admin.inc',
+    'description' => 'Allow users to import email addresses from their address book.'
+  );
+  $items['admin/config/services/contact_importer/info'] = array(
+    'title' => 'Info',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+    'weight' => -2,
+  );
+  $items['admin/config/services/contact_importer/settings'] = array(
+    'title' => 'Settings',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('contact_importer_settings_form'),
+    'access arguments' => array('administer contact importer'),
+    'file' => 'contact_importer.admin.inc',
+    'weight' => -1,
+    'type' => MENU_LOCAL_TASK,
+  );
+  $items['admin/config/services/contact_importer/providers'] = array(
+    'title' => 'Providers and Engines',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('contact_importer_providers_form'),
+    'access arguments' => array('administer contact importer'),
+    'file' => 'contact_importer.admin.inc',
+    'type' => MENU_LOCAL_TASK,
+  );
+  $items['admin/reports/contact_importer'] = array(
+    'title' => 'Contact Importer Log',
+    'page callback' => 'contact_importer_log',
+    'access arguments' => array('administer contact importer'),
+    'file' => 'contact_importer.admin.inc',
+  );
+  $items['admin/reports/contact_importer/log'] = array(
+    'title' => 'Log',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+    'weight' => -1,
+  );
+  $items['admin/reports/contact_importer/clear'] = array(
+    'title' => 'Clear logs',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('contact_importer_log_clear_confirm_form'),
+    'access arguments' => array('administer contact importer'),
+    'file' => 'contact_importer.admin.inc',
+    'type' => MENU_LOCAL_TASK,
+  );
+
+  // Front end.
+  $items['contact_importer'] = array(
+    'title' => 'Import your contacts',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('contact_importer_form'),
+    'file' => 'contact_importer.pages.inc',
+    'access arguments' => array('access contact importer'),
+    'type' => MENU_CALLBACK,
+  );
+  // The overlay gracefully deals with a full-HTML page, but we need a separate URL so that we know
+  // that the user has JS. 
+  $items['contact_importer_overlay'] = array(
+    'title' => 'Import your contacts',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('contact_importer_form', TRUE),
+    'file' => 'contact_importer.pages.inc',
+    'access arguments' => array('access contact importer'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['contact_importer_js'] = array(
+    'title' => 'Import your contacts',
+    'page callback' => 'contact_importer_js',
+    'access arguments' => array('access contact importer'),
+    'file' => 'contact_importer.pages.inc',
+    'type' => MENU_CALLBACK,
+  );
+  return $items;
+}
+
+/**
+ * Implements hook_requirements().
+ *
+ * This is in the module file and not the install file because we call it often to see if the module
+ * is correctly configured.
+ */
+function contact_importer_requirements($phase) {
+  $requirements = array();
+
+  if ($phase == 'runtime') {
+
+    $engines = _contact_importer_engines();
+
+    // Raise an error if there are no engines.
+    if (!count($engines)) {
+      $requirements['contact_importer_engines'] = array(
+        'title' => 'Contact Importer Engines',
+        'description' => t(
+          'No retrieval engine modules have been enabled.  Please navigate to the ' .
+          '<a href="@modules">modules page</a> to enable one.',
+          array('@modules' => url('admin/modules'))
+        ),
+        'severity' => REQUIREMENT_ERROR,
+        'value' => t('No engines found'),
+      );
+    }
+
+    // Raise an error if an engine's include files do not exist.
+    foreach ($engines as $engine_name => $engine) {
+      if (!contact_importer_load_library($engine_name)) {
+        $requirements['contact_importer_engine_' . $engine_name] = array(
+          'title' => 'Contact Importer ' . $engine['human_readable'],
+          'description' => t(
+            '@engine requires one or more library files provided by the retrieval service.  ' .
+            'These files should be placed at %libraries_path or %module_path. If you are not using ' .
+            'this retrieval service you must disable the @engine Engine module.',
+            array(
+              '@engine' => $engine['human_readable'],
+              '%libraries_path' => 'sites/all/libraries/' . $engine['library_directory'],
+              '%module_path' => drupal_get_path('module', $engine_name) . '/' . $engine['library_directory'],
+            )
+          ),
+          'severity' => REQUIREMENT_ERROR,
+          'value' => t('Library files not found'),
+        );
+      }
+    }
+
+    // Do we have a modal pop-up?
+    if (variable_get('contact_importer_modal', 'none') == 'none') {
+      $requirements['contact_importer_modal'] = array(
+        'title' => 'Contact Importer modal pop-ups',
+        'description' => t('Contact Importer works best when using a ' .
+          '<a href="@url">modal pop-up</a> to fetch contacts.',
+          array('@url' => url('admin/config/services/contact_importer/settings'))
+        ),
+        'severity' => REQUIREMENT_INFO,
+        'value' => t('Modal pop-up not found'),
+      );
+    }
+
+    // Check that there's at least one provider enabled.
+    $enabled_providers = _contact_importer_providers_enabled();
+    if (empty($enabled_providers)) {
+      $requirements['contact_importer_providers_enabled'] = array(
+        'title' => 'Contact Importer Providers',
+        'severity' => REQUIREMENT_ERROR,
+        'value' => t('No providers enabled'),
+        'description' => t(
+          'No providers have been enabled.  Please navigate to the ' .
+          '<a href="@providers">providers page</a> to enable one.',
+          array('@providers' => url('admin/config/services/contact_importer/providers'))
+        ),
+      );
+    }
+
+    // Else all is well.
+    if (empty($requirements)) {
+      $requirements['contact_importer'] = array(
+        'title' => 'Contact Importer',
+        'value' => 'Setup correctly',
+      );
+    }
+
+  }
+
+  return $requirements;
+}
+
+/**
+ * Implements hook_cron().
+ */
+function contact_importer_cron() {
+  // User's that attempt an import, but then bail will have incomplete log entries.
+  // Clean these up by marking as complete any session IDs that no longer exist.
+  // AFAICT this cannot be DBTNGified because db_update() can't do joins.
+  db_query('UPDATE {contact_importer_log} cil
+   LEFT JOIN {sessions} s
+   ON cil.session_id = s.sid
+   SET cil.completed = 1
+   WHERE s.sid IS NULL');
+
+  // Cleanup old values from the log table.
+  $max = db_query('SELECT MAX(log_id) FROM {contact_importer_log}')->fetchField();
+  db_delete('contact_importer_log')
+    ->condition('log_id', $max - variable_get('dblog_row_limit', 1000), '<=')
+    ->execute();
+
+}
+
+/**
+ * Implements hook_admin_paths().
+ */
+function contact_importer_admin_paths() {
+  $paths = array(
+    'contact_importer_js' => TRUE,
+    'contact_importer_overlay' => TRUE,
+  );
+  return $paths;
+}
+
+/**
+ * Adds our special JS.
+ *
+ * Since we need to maintain degradablity for browsers with no JS, or no modal,
+ * we setup the source forms assuming the worst.  This function then adds JS that makes
+ * the source form call the modal framework instead of going to a new page.
+ *
+ * @return NULL
+ */
+function contact_importer_add_js() {
+
+  // This is the page that we will return to when the form is submitted.
+  // Used for our non JS form.
+  $_SESSION['contact_importer_destination'] = request_path();
+  $options = drupal_parse_url(request_uri());
+  $_SESSION['contact_importer_destination_query'] = $options['query'];
+  $separator = variable_get('contact_importer_separator', '\n');
+  $js = '';
+
+  switch (variable_get('contact_importer_modal', 'none')) {
+    case 'lightbox2':
+      lightbox2_add_files();
+
+      // Add our own JS.
+      // Don't use jQuery(document).ready() so that this fires before Lightbox.
+      // This way Lightbox will see the rel attr.
+      $js = <<<EOD
+        jQuery('a.contact-importer-link').attr('href', jQuery('a.contact-importer-link').attr('href') + '_js');
+        jQuery('a.contact-importer-link').attr('rel', 'lightframe[|width:550px; height:550px;]');
+        jQuery('.contact-importer-review-message').hide('fast');
+EOD;
+      break;
+
+    case 'overlay':
+      $js = <<<EOD
+        jQuery('a.contact-importer-link').attr('href', jQuery('a.contact-importer-link').attr('href') + '_overlay');
+EOD;
+      break;
+
+    case 'automodal':
+      // To avoid closing the modal on each form step.
+      $automodal_settings = array(
+        'automodalClose' => FALSE,
+      );
+
+      // onSubmit callback function to transfer emails to original form.
+      $js = <<<EOD
+        Drupal.automodal.onSubmitCallback = {
+          croma_ui: function(emails, statusMessages) {
+            Drupal.contact_importer.contactImporterFillEmails(emails);
+          }
+        }
+EOD;
+      // Default automodal settings are autoFit On, draggable On, width:600px, height:400px
+      // That settings can be overriden using hook_automodal_alter().
+      automodal_add('a.contact-importer-link', $automodal_settings);
+      break;
+
+    default:
+      // No JS to add.
+      return;
+
+  }
+  drupal_add_js($js, array('type' => 'inline', 'scope' => 'footer'));
+  $js = <<<EOD
+    Drupal.contact_importer = Drupal.contact_importer || {};
+
+    /**
+     * Fills the textfield with our addresses.
+     *
+     * @param mixed emails
+     *   Either a string or array of emails.
+     */
+    Drupal.contact_importer.contactImporterFillEmails = function(emails) {
+      var destination = jQuery('.contact-importer-destination').eq(0);
+      switch (typeof(emails)) {
+        case 'string':
+          var destinationText = destination.val();
+          destination.val(destinationText + (destinationText ? "$separator" : '') + emails);
+          break;
+        case 'object':
+          $.each(emails, function(index, email){
+            var destinationText = destination.val();
+            destination.val(destinationText + (destinationText ? "$separator" : '') + email);
+          });
+          break;
+      }
+    };
+EOD;
+  drupal_add_js($js, array('type' => 'inline', 'scope' => 'footer'));
+}
+
+/**
+ * Stores the given contacts array for later retrieval.
+ *
+ * @param mixed $contacts
+ *  An array of arrays where each secondary array represents a contact
+ *  and has keys for email and name.  Or set to NULL to reset the cache.
+ * @return NULL
+ */
+function contact_importer_set_contacts($contacts = array()) {
+
+  // Do we need to reset?
+  if ($contacts === NULL || !is_array($contacts)) {
+    unset($_SESSION['contact_importer_contacts']);
+  }
+
+  // Otherwise store the contacts.
+  $_SESSION['contact_importer_contacts'] = $contacts;
+}
+
+/**
+ * Return the contacts.
+ *
+ * @param string $format
+ *  What format do you want the contacts returned as:
+ *  'array', 'string_emails', 'string_names'
+ * @param string $separator
+ *  Only used for formats other than 'array'.  What do you want to separate the elements?
+ *  If 'default', the value as saved on the settings form will be used.
+ * @param boolean $js
+ *  Are we currently using the JS version of the forms?
+ *
+ * @return mixed
+ *  If it appears that we are at a new URL, then we must be on a different import form, then the stored
+ *    contacts are no longer valid, then NULL is returned.
+ *  If the format is 'array' an array of arrays where each secondary array represents a contact
+ *    and has keys for email and name.
+ *  Otherwise a string.
+ */
+function contact_importer_get_contacts($format = 'string_emails', $separator = 'default', $js = FALSE) {
+  if (isset($_SESSION['contact_importer_contacts'])) {
+    $contacts = (array) $_SESSION['contact_importer_contacts'];
+  }
+  else {
+    $contacts = array();
+  }
+
+  // Get seperator.
+  if ($separator == 'default') {
+    $separator = variable_get('contact_importer_separator', '\n');
+  }
+  if (!$js) {
+    $separator = str_replace(array('\r', '\n'), array("\r", "\n"), $separator);
+  }
+
+  // Are we on the same form as the original process, or is this a new form?
+  if (
+    !$js &&
+    isset($_SESSION['contact_importer_destination']) &&
+    $_SESSION['contact_importer_destination'] == request_path()
+      ||
+    $js &&
+    (request_path() == 'contact_importer_js' || request_path() == 'contact_importer_overlay')
+  ) {
+    contact_importer_set_contacts(NULL);
+    if ($format == 'array') {
+      return $contacts;
+    }
+    if ($format == 'string_names') {
+      $contacts = array_flip($contacts);
+    }
+    return implode($separator, $contacts);
+  }
+  return NULL;
+}
+
+/**
+ * Bind Contact Importer to the given field on the given form.
+ *
+ * @param array &$form
+ *  FAPI form array.
+ * @param string $field_name
+ *  The field to bind to.
+ * @return boolean
+ *  TRUE on successful binding, else FALSE.
+ */
+function contact_importer_bind_to_form(&$form, $field_name) {
+
+  // We can only bind to one form per page.
+  // I don't think we need drupal_static() here.
+  static $has_run = FALSE;
+
+  if (
+    !$has_run &&
+    user_access('access contact importer') &&
+    request_path() != 'contact_importer' &&
+    request_path() != 'contact_importer_js' &&
+    request_path() != 'contact_importer_overlay'
+  ) {
+
+    // Get a reference to the field if it exists.
+    $field_reference = & _contact_importer_find_field($form, $field_name);
+    if (empty($field_reference)) {
+      return FALSE;
+    }
+
+    // When a modal pop-up is used, this class tells Contact Importer to put the email addresses here.
+    $field_reference['#attributes']['class'][] = 'contact-importer-destination';
+
+    // If the user has already imported contacts, but they don't have Javascript, they will be
+    // redirected back here.
+    if ($contacts = contact_importer_get_contacts()) {
+      $field_reference['#default_value'] = $contacts;
+    }
+
+    // Initiate Contact Importer.
+    // It is important that this happens after saved contacts are retrieved above.
+    contact_importer_add_js();
+
+    // Show the link to import the contacts.
+    $description = '<div class="contact-importer-message">' .
+      t('You can also <a href=!importer-link class="contact-importer-link">import your ' .
+        'contacts from GMail, Yahoo!, Lycos, AOL, Hotmail and many more.</a>',
+        array('!importer-link' => url('contact_importer'))) .
+      '</div>';
+    if (isset($field_reference['#description'])) {
+      $field_reference['#description'] .= ' ' . $description;
+    }
+    else {
+      $field_reference['#description'] = $description;
+    }
+
+    return $has_run = TRUE;
+  }
+  return FALSE;
+}
+
+/**
+ * Returns a wildcard domains array (For providers that work with all domains).
+ *
+ * @return array
+ */
+function contact_importer_domains_wildcard_array() {
+  return array(
+    '*' => array(
+      'regex' => '/(.*)/i',
+      'human_readable' => '*',
+    ),
+  );
+}
+
+/**
+ * Takes a human readable string and makes it machine readable.
+ *
+ * @param string $human_readable
+ * @return string
+ */
+function contact_importer_string_make_machine_readable($human_readable) {
+  return strtolower(preg_replace("/[^A-Za-z0-9+]/", '', $human_readable));
+}
+
+/**
+ * Clears all of our caches.
+ */
+function contact_importer_cache_clear_all() {
+  cache_clear_all('contact_importer', 'cache', TRUE);
+}
+
+/**
+ * Loads an engine's required library.
+ *
+ * @param string $engine_name
+ * @param array $engine = NULL
+ *  The engine info.  Should be omitted in most cases unless called from an info hook.
+ * @return mixed
+ *  TRUE on success, or FALSE on error.
+ */
+function contact_importer_load_library($engine_name, $engine = NULL) {
+  if (empty($engine)) {
+    $engines = _contact_importer_engines();
+    $engine = $engines[$engine_name];
+  }
+
+  // Where is the library?
+  if (function_exists('libraries_get_path')) {
+    $library_path = libraries_get_path($engine['library_directory']) . '/' .
+        $engine['library_filename'];
+  }
+  elseif (file_exists('./sites/all/libraries/' . $engine['library_directory'])) {
+    $library_path = './sites/all/libraries/' . $engine['library_directory'] . '/' .
+      $engine['library_filename'];
+  }
+  elseif (file_exists('./' . drupal_get_path('module', $engine_name) . '/' . $engine['library_directory'])) {
+    $library_path = './' . drupal_get_path('module', $engine_name) . '/' . 
+            $engine['library_directory'] . '/' . $engine['library_filename'];
+  }
+
+  // Does the file exist?
+  if (empty($library_path) || !is_file($library_path)) {
+    watchdog('Contact Importer', 'Error loading library.  The library for %engine may be missing.',
+      array('%engine' => $engine_name), WATCHDOG_ERROR);
+    return FALSE;
+  }
+  require_once DRUPAL_ROOT . '/' . $library_path;
+  return TRUE;
+
+}
+
+/**
+ * When the user logs in to the provider call this function to create a log entry.
+ *
+ * @param string $provider_name
+ *  The provider used.
+ * @param boolean $success
+ *  TRUE on successfull login, else FALSE.
+ * @param string $email_address = ''
+ *  The email address / username used to login.  Leave blank for upload providers.
+ */
+function contact_importer_log_authentication($provider_name, $engine_name, $success = TRUE, $email = '') {
+  $log = array(
+    'session_id' => session_id(),
+    'provider_name' => $provider_name,
+    'engine_name' => $engine_name,
+    'authentication_success' => $success,
+    'email' => $email,
+    'completed' => FALSE,
+  );
+  drupal_write_record('contact_importer_log', $log);
+}
+
+/**
+ * Implements hook_theme().
+ */
+function contact_importer_theme() {
+  return array(
+    'contact_importer_js' => array(
+      'variables' => array('content' => NULL, 'show_messages' => TRUE),
+      'template' => 'contact-importer-js',
+    ),
+    'contact_importer_providers_form' => array(
+      'render element' => 'form',
+      'file' => 'contact_importer.admin.inc',
+    ),
+  );
+}
+
+/**
+ * The variables array generated here is a mirror of template_preprocess_page().
+ * This preprocessor will run its course when theme_maintenance_page() is
+ * invoked.
+ *
+ * An alternate template file of "maintenance-page--offline.tpl.php" can be
+ * used when the database is offline to hide errors and completely replace the
+ * content.
+ *
+ * The $variables array contains the following arguments:
+ * - $content
+ *
+ * @see maintenance-page.tpl.php
+ */
+function contact_importer_preprocess_contact_importer_js(&$variables) {
+
+  // Construct page title
+  if (drupal_get_title()) {
+    $head_title = array(strip_tags(drupal_get_title()), variable_get('site_name', 'Drupal'));
+  }
+  else {
+    $head_title = array(variable_get('site_name', 'Drupal'));
+    if (variable_get('site_slogan', '')) {
+      $head_title[] = variable_get('site_slogan', '');
+    }
+  }
+
+  // set the default language if necessary
+  $language = isset($GLOBALS['language']) ? $GLOBALS['language'] : language_default();
+
+  // Get content.
+  $variables['content'] = drupal_render($variables[0]);
+  unset($variables[0]);
+
+  $variables['head_title']        = implode(' | ', $head_title);
+  $variables['base_path']         = base_path();
+  $variables['front_page']        = url();
+  $variables['breadcrumb']        = '';
+  $variables['language']          = $language;
+  $variables['language']->dir     = $language->direction ? 'rtl' : 'ltr';
+  $variables['messages']          = $variables['show_messages'] ? theme('status_messages') : '';
+  $variables['site_name']         = (theme_get_setting('toggle_name') ? variable_get('site_name', 'Drupal') : '');
+  $variables['site_slogan']       = (theme_get_setting('toggle_slogan') ? variable_get('site_slogan', '') : '');
+  $variables['tabs']              = '';
+  $variables['title']             = drupal_get_title();
+  $variables['footer']            = drupal_get_js('footer');
+  $variables['classes_array'][]   = 'no-sidebars';
+}
+
+/**
+ * The variables array generated here is a mirror of template_process_html().
+ * This processor will run its course when theme_maintenance_page() is invoked.
+ *
+ * @see maintenance-page.tpl.php
+ */
+function contact_importer_process_contact_importer_js(&$variables) {
+  $variables['head']    = drupal_get_html_head();
+  $variables['css']     = drupal_add_css();
+  $variables['styles']  = drupal_get_css();
+  $variables['scripts'] = drupal_get_js();
+}
+
+/**
+ * Gets a list of compatible retrieval engines.
+ *
+ * @return array of arrays
+ *  Each secondary array represents a retrieval engine with keys for:
+ *    - human_readable: Name of the library/service that the engine integrates with.
+ *    - url: URL of library.
+ *    - inc: The path to the library's main include file, without which the engine cannot function.
+ *    - readme: The plain-text or HTML documentation for the engine.
+ *    - providers: an array of providers.  Each provider has keys for:
+ *      - human_readable: the human readable form of the provider name.
+ *      - type: one of 'webmail', 'social', or 'upload'.
+ *      - possible_favicon_urls: An array of URLs that might be favicons in order of preference.
+ *        These will then be resolved into
+ *          provider['favicon_url'] - the URL of the favicon, if one was found, else ''
+ *          provider['favicon'] - an HTML image tag of the favicon, if one was found, else ''
+ *      - domains: an array of the domains that the provider supports.  Each doamin has keys for:
+ *        - human_readable: the human readable form of the provider name.
+ *        - regex: a Perl compatible regular expression that can be used to find the domain.
+ *
+ *  An engine may add any additional data that it requires.
+ *
+ *  All of this is cached, so an engine may do any expensive processing that it requires.
+ *
+ *  Ex.
+ *    array(
+ *      'foo_engine' => array(
+ *        'human_readable' => 'Foo Engine',
+ *        'url' => 'http://foo.com',
+ *        'inc' => 'foo/foo.php',
+ *        'readme' => 'README.txt',
+ *        'providers' = array(
+ *          'gmail' => array(
+ *            'human_readable' => 'GMail',
+ *            'type' => 'webmail',
+ *            'possible_favicon_urls' => array('http://mail.google.com/favicon.ico'),
+ *            'domains' => array(
+ *              'gmailcom' => array(
+ *                'human_readable' => 'gmail.com',
+ *                'regex' => '/(gmail.com)/i',
+ *              ),
+ *              'googlemailcom' => array(
+ *                'human_readable' => 'googlemail.com',
+ *                'regex' => '/(googlemail.com)/i',
+ *              ),
+ *            ),
+ *          ),
+ *          'thunderbird' => array(
+ *            'human_readable' => 'Thunderbird',
+ *            'type' => 'upload',
+ *            'possible_favicon_urls' => array('http://mxr.mozilla.org/comm-central/source/other-licenses/branding/thunderbird/mailicon16.png?raw=1'),
+ *            'domains' => array(
+ *              '*' => array(
+ *                'human_readable' => '*',
+ *                'regex' => '/(.*)/i',
+ *              ),
+ *            ),
+ *          ),
+ *          'facebook' => array(
+ *            'human_readable' => 'Facebook',
+ *            'type' => 'social',
+ *            'possible_favicon_urls' => array('http://facebook.com/favicon.ico'),
+ *            'domains' => array(
+ *              '*' => array(
+ *                'human_readable' => '*',
+ *                'regex' => '/(.*)/i',
+ *              ),
+ *            ),
+ *          ),
+ *        ),
+ *      ),
+ *    );
+ */
+function _contact_importer_engines() {
+  $engines = &drupal_static(__FUNCTION__);
+  if (!empty($engines)) {
+    return $engines;
+  }
+
+  // Check cache.
+  $cache = cache_get('contact_importer_engines');
+  if (!empty($cache->data)) {
+    return $cache->data;
+  }
+
+  // Invoke engines.
+  $can_cache = TRUE;
+  foreach (module_implements('retrieval_engine_info') as $module) {
+    $engines[$module] = module_invoke($module, 'retrieval_engine_info');
+    // Only cache if the libraries for all enabled engines are setup.
+    if (empty($engines[$module]['providers'])) {
+      $can_cache = FALSE;
+    }
+  }
+
+  // Save to cache.
+  if ($can_cache) {
+    ksort($engines);
+    cache_set('contact_importer_engines', $engines);
+  }
+  return $engines;
+}
+
+/**
+ * Gets a list of all providers.
+ *
+ * @return array of arrays
+ *  Each secondary array is a provider.
+ *  @see _contact_importer_engines()
+ *  Additionally each provider also has a keys for
+ *    - engines: an array of the engines that work with this
+ *    - engine_enabled: the name of the engine that is managing this provider, or NULL if it is
+ *      disabled.
+ */
+function _contact_importer_providers() {
+  $providers = array();
+  $engines = _contact_importer_engines();
+  foreach ($engines as $engine_name => $engine) {
+    foreach ($engine['providers'] as $provider_name => $provider) {
+
+      // Add the provider if another engine has not already done so, otherwise add only the domains.
+      if (!isset($providers[$provider_name])) {
+        $providers[$provider_name] = $provider;
+      }
+      else {
+
+        // Choose the best favicon.
+        if (!empty($providers[$provider_name]['possible_favicon_urls'])) {
+          $providers[$provider_name]['possible_favicon_urls'] = array_merge(
+            $providers[$provider_name]['possible_favicon_urls'], $provider['possible_favicon_urls']);
+        }
+
+        // Merge domains.
+        $providers[$provider_name]['domains'] =
+          array_merge($providers[$provider_name]['domains'], $provider['domains']);
+
+        // Add any additional data.
+        foreach ($provider as $field => $value) {
+          if (!isset($providers[$provider_name][$field])) {
+            $providers[$provider_name][$field] = $value;
+          }
+        }
+
+      }
+      ksort($providers[$provider_name]['domains']);
+
+      // Add to the engines array.
+      $providers[$provider_name]['engines'][$engine_name] = $engine['human_readable'];
+    }
+  }
+  ksort($providers);
+
+  // Add the details on which engine is managing which provider.
+  $providers_saved = variable_get('contact_importer_providers_saved', array());
+  foreach ($providers as $provider_name => &$provider) {
+    $provider['engine_enabled'] =
+      !empty($providers_saved[$provider_name]) ? $providers_saved[$provider_name] : NULL;
+  }
+
+  return $providers;
+}
+
+/**
+ * Gets a list of the enabled providers.
+ *
+ * @return array of arrays
+ *  Each secondary array is a provider type.  Each provider type is an array of arrays.  Each
+ *  tertiary array represents a provider.
+ *  @see _contact_importer_engines()
+ *  Each provider also has a key for 'engine_enabled' which is the name of the engine that is managing this
+ *  provider.
+ */
+function _contact_importer_providers_enabled() {
+  $providers = &drupal_static(__FUNCTION__);
+  if (!empty($providers)) {
+    return $providers;
+  }
+
+  // Check cache.
+  $cache = cache_get('contact_importer_providers');
+  if (!empty($cache->data)) {
+    return $cache->data;
+  }
+
+  $providers = _contact_importer_providers();
+  foreach ($providers as $provider_name => &$provider) {
+    if (empty($provider['engine_enabled'])) {
+      unset($providers[$provider_name]);
+      continue;
+    }
+
+    // Resolve favicons.
+    // TODO: This could be done with a shutdown function to prevent the long page load.
+    foreach ($provider['possible_favicon_urls'] as $favicon_url) {
+      if ($image = _contact_importer_is_url_an_image($favicon_url)) {
+        $provider['favicon_url'] = $favicon_url;
+        $local_url = _contact_importer_save_data_locally($image, $provider_name . '_favicon.ico');
+        if ($local_url) {
+          $provider['favicon_url'] = $local_url;
+        }
+        $provider['favicon'] = theme('image', array('path' => $provider['favicon_url'],
+            'width' => 16, 'height' => 16, 'alt' => '', 'title' => $provider['human_readable']));
+        unset($provider['possible_favicon_urls']);
+        continue(2);
+      }
+    }
+
+    // None of the favicons worked out.
+    unset($provider['possible_favicon_urls']);
+    $provider['favicon_url'] = $provider['favicon'] = '';
+  }
+
+  // Save to cache.
+  if (!empty($providers)) {
+    cache_set('contact_importer_providers', $providers);
+  }
+  return $providers;
+}
+
+/**
+ * Return a reference to the given field of the form.  Even works for a field within a fieldset.
+ *
+ * Note that to get a reference to a field you would do
+ * $field_reference =& _contact_importer_find_field($form, $field);
+ *
+ * @param array $form
+ *  FAPI form array.
+ * @param string $field
+ *  The field to search for.
+ */
+function &_contact_importer_find_field(&$form, $field) {
+  $empty = array();
+  if (isset($form[$field])) {
+    return $form[$field];
+  }
+  $children = element_children($form);
+  foreach ($children as $child) {
+    if (empty($form[$child]['#type']) || $form[$child]['#type'] == 'fieldset') {
+      $field_reference = & _contact_importer_find_field($form[$child], $field);
+      if (!empty($field_reference)) {
+        return $field_reference;
+      }
+    }
+  }
+  return $empty;
+}
+
+/**
+ * Check to see if the module is missing any requirements.
+ *
+ * @param boolean $check_errors_and_warnings
+ *  Check for error and warning level messages.
+ * @param boolean $check_info
+ *  Check for information level messages.
+ * @return boolean
+ *  TRUE if something still needs to be configured, else FALSE.
+ */
+function _contact_importer_are_requirements_missing($check_errors_and_warnings = TRUE, $check_info = FALSE) {
+
+  // We need to include this because the REQUEIREMENT_* constants are defined there.
+  include_once DRUPAL_ROOT . '/' . './includes/install.inc';
+
+  $requirements = contact_importer_requirements('runtime');
+  foreach ($requirements as $requirement) {
+    if (!empty($requirement['severity'])) {
+      if ($requirement['severity'] == REQUIREMENT_INFO) {
+        if ($check_info) {
+          return TRUE;
+        }
+      }
+      elseif ($check_errors_and_warnings) {
+        return TRUE;
+      }
+    }
+  }
+  return FALSE;
+}
+
+/**
+ * Tests if the URL is likely to point to an image.  Not 100% accurate.
+ *
+ * @param string $url
+ * @return mixed
+ *  The image data if the URL points to an image, else FALSE.
+ */
+function _contact_importer_is_url_an_image($url) {
+
+  // Shorten the default timeout - we don't want the page to hang because we're waiting on favicons.
+  $response = drupal_http_request($url, array(), 'GET', NULL, 2, 4);
+
+  // Is it a valid response?
+  if ($response->code != 200 && $response->code != 301 || empty($response->data)) {
+    return FALSE;
+  }
+
+  // Normalize case of headers.
+  $headers = array();
+  foreach ($response->headers as $header => $header_value) {
+    $headers[drupal_strtolower($header)] = drupal_strtolower($header_value);
+  }
+
+  // Is it an image?
+  if (
+    !isset($headers['content-type']) ||
+    strpos($headers['content-type'], 'image') === FALSE &&
+    strpos($headers['content-type'], 'application/octet-stream') === FALSE
+  ) {
+    return FALSE;
+  }
+
+  return $response->data;
+}
+
+/**
+ * Save a remote file on the local filesystem.
+ *
+ * @param string $data
+ *  The contents of the file.
+ * @param string $filename
+ *  The name to save it to.  It is the callers responsibility to ensure that this file has a safe
+ *  extension (i.e. no PHP files).
+ * @return mixed
+ *  the path of the local file (relative to the Drupal files directory). Or 0 on error.
+ */
+function _contact_importer_save_data_locally($data, $filename) {
+  $directory = 'public://contact_importer';
+  if (!file_prepare_directory($directory, FILE_CREATE_DIRECTORY)) {
+    return 0;
+  }
+  $filename = $directory . '/' . $filename;
+  return file_unmanaged_save_data($data, $filename, FILE_EXISTS_REPLACE);
+}
+
+/**
+ * Determine the path to use for the main contact importer form.
+ * Used if there's an error partway through the multistep form and we need to return to the beginning.
+ *
+ * @param array $form_state = NULL
+ *  The FAPI form_state array if available.
+ *
+ * @return string
+ */
+function contact_importer_form_path($form_state = NULL) {
+  $url = 'contact_importer';
+  if (isset($form_state['storage']['js_modal'])) {
+    $url = 'contact_importer' . ($form_state['storage']['js_modal'] ? '_js' : '');
+  }
+  elseif (arg(0) == 'contact_importer') {
+    $url = 'contact_importer';
+  }
+  elseif (arg(0) == 'contact_importer_js') {
+    $url = 'contact_importer_js';
+  }
+  elseif (arg(0) == 'contact_importer_overlay') {
+    $url = 'contact_importer_overlay';
+  }
+  elseif (variable_get('contact_importer_modal', 'none') == 'lightbox2') {
+    $url = 'contact_importer_js';
+  }
+  $url = $url;
+
+  // Can't get automodal to revert properly.  Gotta bail.
+  // Neither history.go() or window.location.href will work for us.
+  if (variable_get('contact_importer_modal', 'none') == 'automodal') {
+    $js = <<<EOD
+      jQuery(window).load(function(){
+        jQuery('a[href="$url"]').click(function(event){
+          event.preventDefault();
+          window.parent.Drupal.modalFrame.close();
+        });
+      });
+EOD;
+    drupal_add_js($js, array('type' => 'inline', 'scope' => 'footer'));
+  }
+  return $url;
+}

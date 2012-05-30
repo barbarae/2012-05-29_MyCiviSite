@@ -1,0 +1,149 @@
+<?php
+
+/**
+ * Implements hook_help().
+ */
+function contact_cc_help($path = NULL, $arg = NULL) {
+  $output = "";
+  switch ($path) {
+    case 'admin/help#contact_cc':
+      $output = t('Adds cc and bcc fields to site-wide contact form.');
+    break;
+  }
+  return $output;
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function contact_cc_form_contact_category_edit_form_alter(&$form, &$form_state) {
+  $formid = $form['cid']['#value'];
+  $contact_cc_data = array();
+  if (empty($formid)) {
+    $formid = 0;
+  }
+  $form['#submit'][] = '_contact_cc_submit';
+  $contact_cc_data = _contact_cc_get($formid);
+  $form['contact_cc_cc'] = array(
+    '#type' => 'textarea',
+    '#default_value' => $contact_cc_data['cc'],
+    '#title' => t('CC recipients'),
+    '#description' => t('Email addresses to appear in the CC field.'),
+    '#required' => FALSE,
+    '#element_validate' =>  array('_contact_cc_validate'),
+  );
+  $form['contact_cc_bcc'] = array(
+    '#type' => 'textarea',
+    '#default_value' => $contact_cc_data['bcc'],
+    '#title' => t('BCC recipients'),
+    '#description' => t('Email addresses to appear in the BCC field. These will not be visible to the mail recipient.'),
+    '#required' => FALSE,
+    '#element_validate' =>  array('_contact_cc_validate'),
+  );
+  $order = array('category', 'recipients', 'contact_cc_cc', 'contact_cc_bcc', 'reply', 'weight', 'selected', 'submit');
+  foreach ($order as $key => $value) {
+    $form[$value]['#weight'] = $key;
+  }
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function contact_cc_form_contact_category_delete_form_alter(&$form, &$form_state) {
+  $form['#submit'][] = '_contact_cc_delete_submit';
+}
+
+/**
+ * custom submit functions
+ */
+function _contact_cc_submit($form, &$form_state) {
+  $formid = $form_state['values']['cid'];
+  $contact_cc_data = array(
+    'cc' => $form_state['values']['contact_cc_cc'],
+    'bcc' => $form_state['values']['contact_cc_bcc']
+  );
+  _contact_cc_set($formid, $contact_cc_data);
+}
+
+function _contact_cc_delete_submit($form, &$form_state) {
+  $formid = $form['contact']['#value']['cid'];
+  _contact_cc_del($formid);
+}
+
+/**
+ * Implements hook_mail_alter().
+ */
+function contact_cc_mail_alter(&$message) {
+  //$contact_cc_data = variable_get('contact_cc_data', array());
+  if (!isset($message['params']['cid'])) {
+    return;
+  }
+  $formid = $message['params']['cid'];
+  $contact_cc_data = _contact_cc_get($formid);
+  if ($contact_cc_data['cc']) {
+    $message['headers']['Cc'] = $contact_cc_data['cc'];
+  }
+  if ($contact_cc_data['bcc']) {
+    $message['headers']['Bcc'] = $contact_cc_data['bcc'];
+  }
+}
+
+/**
+ * Validate function
+ */
+function _contact_cc_validate($element, &$form_state) {
+  if ($element['#value']) {
+    $mailarr = explode(",", $element['#value']);
+    $invalidarr = array();
+    foreach ($mailarr as $email) {
+      if (!valid_email_address(trim($email))) {
+        $invalidarr[] = trim($email);
+      }
+    }
+    if (!empty($invalidarr)) {
+      $message = format_plural(count($invalidarr), "The following email is invalid: %emails", "The following emails are invalid: %emails", array('%emails' => implode(', ', $invalidarr)));
+      form_set_error($element['#name'], $message);
+    }
+  }
+}
+/**
+ * Custom db functions below
+ */
+function _contact_cc_set($cid, $data) {
+  $testresult = db_query("SELECT cid FROM {contact_cc} WHERE cid = :cid", array(':cid' => $cid));
+  $results = FALSE;
+  foreach ($testresult as $result) {
+    $results = TRUE;
+  }
+  if ($results) {
+    //update record
+    db_update('contact_cc')
+    ->fields(array('contact_cc_data' => serialize($data)))
+    ->condition('cid', $cid)
+    ->execute();
+  }
+  else {
+    //new record
+    $id = db_insert('contact_cc')
+    ->fields(array(
+      'cid' => $cid,
+      'contact_cc_data' => serialize($data)
+    ))
+    ->execute();
+  }
+}
+function _contact_cc_get($cid) {
+  $result = db_query("SELECT contact_cc_data FROM {contact_cc} WHERE cid = :cid", array(':cid' => $cid));
+  $output = array('cc' => '', 'bcc' => '');
+  foreach ($result as $row) {
+    if ($row) {
+      $output = unserialize($row->contact_cc_data);
+    }
+  }
+  return $output;
+}
+function _contact_cc_del($cid) {
+  db_delete('contact_cc')
+  ->condition('cid', $cid)
+  ->execute();
+}

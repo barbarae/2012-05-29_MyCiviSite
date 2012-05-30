@@ -1,0 +1,21 @@
+name = Admin
+description = UI helpers for Drupal admins and managers.
+package = Administration
+core = 7.x
+configure = admin/config/user-interface/admin
+
+files[] = admin.admin.inc
+files[] = admin.install
+files[] = admin.module
+files[] = includes/admin.devel.inc
+files[] = includes/admin.theme.inc
+files[] = theme/admin-panes.tpl.php
+files[] = theme/admin-toolbar.tpl.php
+files[] = theme/theme.inc
+
+; Information added by drupal.org packaging script on 2011-09-30
+version = "7.x-2.x-dev"
+core = "7.x"
+project = "admin"
+datestamp = "1317340920"
+

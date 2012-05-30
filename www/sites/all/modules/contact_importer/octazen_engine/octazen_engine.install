@@ -1,0 +1,21 @@
+<?php
+
+/**
+ * @file
+ * (un)install routines for octazen_engine.
+ */
+
+/**
+ * Implements hook_enable().
+ */
+function octazen_engine_enable() {
+  contact_importer_cache_clear_all();
+}
+
+/**
+ * Implements hook_disable().
+ */
+function octazen_engine_disable() {
+  contact_importer_cache_clear_all();
+}
+

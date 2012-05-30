@@ -1,0 +1,11 @@
+name = Google Chart Tools Example
+description = Provide a Google Chart Tools Example.
+dependencies[] = google_chart_tools
+core = 7.x
+package = Charting
+; Information added by drupal.org packaging script on 2012-04-19
+version = "7.x-1.0-beta3"
+core = "7.x"
+project = "google_chart_tools"
+datestamp = "1334809297"
+

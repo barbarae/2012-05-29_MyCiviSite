@@ -1,0 +1,337 @@
+<?php
+
+/**
+ * Implements hook_menu().
+ */
+function webform_conditional_confirmation_menu() {
+  $items = array();
+
+  // List conditional confirmation rules.
+  $items['node/%webform_menu/webform/confirmation'] = array(
+    'title' => 'Confirmation messages',
+    'page callback' => 'webform_conditional_confirmation_list_confirmations',
+    'page arguments' => array(1),
+    'access callback' => 'node_access',
+    'access arguments' => array('update', 1),
+    'file' => 'webform_conditional_confirmation.pages.inc',
+    'weight' => 3,
+    'type' => MENU_LOCAL_TASK,
+  );
+
+  // Add a new conditional confirmation.
+  $items['node/%webform_menu/webform/confirmation/add'] = array(
+    'title' => 'Add confirmation message',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('webform_conditional_confirmation_edit_confirmation_form', 1, 4),
+    'access callback' => 'node_access',
+    'access arguments' => array('update', 1),
+    'file' => 'webform_conditional_confirmation.pages.inc',
+    'weight' => 0,
+    'type' => MENU_LOCAL_ACTION,
+  );
+
+  // Edit a conditional confirmation.
+  $items['node/%webform_menu/webform/confirmation/%/edit'] = array(
+    'title' => 'Edit confirmation message',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('webform_conditional_confirmation_edit_confirmation_form', 1, 4),
+    'access callback' => 'node_access',
+    'access arguments' => array('update', 1),
+    'file' => 'webform_conditional_confirmation.pages.inc',
+  );
+
+  // Delete a conditional confirmation.
+  $items['node/%webform_menu/webform/confirmation/%/delete'] = array(
+    'title' => 'Delete confirmation message',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('webform_conditional_confirmation_delete_confirmation_form', 1, 4),
+    'access callback' => 'node_access',
+    'access arguments' => array('update', 1),
+    'file' => 'webform_conditional_confirmation.pages.inc',
+  );
+
+  return $items;
+}
+
+/**
+ * Implements hook_theme().
+ */
+function webform_conditional_confirmation_theme() {
+  return array(
+    'webform_conditional_confirmation_list_confirmations' => array(
+      'variables' => array('node' => NULL, 'form' => NULL),
+      'file' => 'webform_conditional_confirmation.pages.inc',
+    ),
+    'webform_conditional_confirmation_list_form' => array(
+      'render element' => 'form',
+      'file' => 'webform_conditional_confirmation.pages.inc',
+    ),
+  );
+}
+
+/**
+ * Load confirmation message for a particular msgid and node.
+ */
+function webform_conditional_confirmation_message_load($node, $msgid = NULL) {
+  // New message, so load defaults.
+  if ($msgid == 'add') {
+    $defaults = new stdClass;
+    $defaults->name = '';
+
+    $defaults->conditional_component = NULL;
+    $defaults->conditional_operator = NULL;
+    $defaults->conditional_values = '';
+    $defaults->conditional_weight = 0;
+
+    $defaults->confirmation = $node->webform['confirmation'];
+    $defaults->confirmation_format = $node->webform['confirmation_format'];
+
+    $defaults->redirect_url = $node->webform['redirect_url'];
+
+    return $defaults;
+  }
+
+  // Load existing messsages.
+  else {
+    $query = db_select('webform_conditional_confirmation', 'wcc')
+               ->fields('wcc')
+               ->condition('nid', $node->nid);
+
+    // If msgid is set, just return settings for the specified message.
+    if ($msgid) {
+      $defaults = $query->condition('msgid', $msgid)
+                        ->execute()
+                        ->fetchObject();
+      return $defaults;
+    }
+
+    // Otherwise fetch all message settings.
+    else {
+      $records = array();
+      $result = $query->orderBy('conditional_weight', 'ASC')
+                      ->orderBy('msgid', 'ASC')
+                      ->execute();
+      while ($record = $result->fetchObject()) {
+        $records[$record->msgid] = $record;
+      }
+      return $records;
+    }
+  }
+
+  return;
+}
+
+/**
+ * Save confirmation message.
+ */
+function webform_conditional_confirmation_message_save($message) {
+  // New message.
+  if (!$message->msgid) {
+    if (lock_acquire('webform_conditional_confirmation_message_insert_' . $message->nid, 5)) {
+      $next_id_query = db_select('webform_conditional_confirmation')->condition('nid', $message->nid);
+      $next_id_query->addExpression('MAX(msgid) + 1', 'msgid');
+      $message->msgid = $next_id_query->execute()->fetchField();
+      if ($message->msgid == NULL) {
+        $message->msgid = 1;
+      }
+      lock_release('webform_conditional_confirmation_message_insert_' . $message->nid);
+    }
+    else {
+      watchdog('webform_conditional_confirmation', 'A Webform conditional message could not be saved because a timeout occurred while trying to acquire a lock for the node. Details: <pre>@message</pre>', array('@message' => print_r($message, TRUE)));
+      return FALSE;
+    }
+    drupal_write_record('webform_conditional_confirmation', $message);
+  }
+
+  // Existing message.
+  else {
+    drupal_write_record('webform_conditional_confirmation', $message, array('nid', 'msgid'));
+  }
+  return $message->msgid;
+}
+
+/**
+ * Delete confirmation message.
+ */
+function webform_conditional_confirmation_message_delete($nid, $msgid) {
+  db_delete('webform_conditional_confirmation')
+    ->condition('nid', $nid)
+    ->condition('msgid', $msgid)
+    ->execute();
+}
+
+/**
+ * Get first matching conditional confirmation message.
+ */
+function webform_conditional_confirmation_get_message(&$node, $submission) {
+  // Get all conditional confirmation messages.
+  $messages = webform_conditional_confirmation_message_load($node);
+
+  // No conditional messages configured, return.
+  if (empty($messages)) {
+    return;
+  }
+
+  // Extra check to ensure we have a populated submission object.
+  if (empty($submission) || empty($submission->data)) {
+    return;
+  }
+
+  $settings = array();
+
+  // Loop through the messages (already sorted by weight) and return on the
+  // first matching one.
+  foreach ($messages as $msgid => $message) {
+    $conditional_cid = $message->conditional_component;
+    $conditional_operator = $message->conditional_operator;
+    $conditional_values = $message->conditional_values;
+
+    $input_values = isset($submission->data[$conditional_cid]['value']) ? $submission->data[$conditional_cid]['value'] : array();
+    $test_values = array_map('trim', explode("\n", $conditional_values));
+
+    // No values input for this component, but we have values to test against,
+    // no match.
+    if (empty($input_values) && !empty($test_values)) {
+      $match = FALSE;
+    }
+    else {
+      // For each inputted value, check for a match against the test values.
+      foreach ($input_values as $input_value) {
+        if ($match = in_array($input_value, $test_values)) {
+          break;
+        }
+      }
+    }
+
+    // Invert the match setting, if "not in" setting used.
+    if ($conditional_operator == '!=') {
+      $match = !$match;
+    }
+
+    // If we have a match, update the settings and return.
+    if ($match) {
+      $node->webform['confirmation'] = $message->confirmation;
+      $node->webform['confirmation_format'] = $message->confirmation_format;
+      $node->webform['redirect_url'] = $message->redirect_url;
+    }
+    elseif (!empty($node->webform_conditional_confirmation)) {
+      $node->webform['redirect_url'] = $node->webform_conditional_confirmation['redirect_url'];
+    }
+  }
+}
+
+/**
+ * Implements hook_form_FORMID_alter().
+ *
+ * Add in our submit handler and reset 'redirect_url' to a safe value so it
+ * doesn't interfere with our settings causing duplicate messages. Store the
+ * original value in a custom place so we can fallback to it later if needed.
+ */
+function webform_conditional_confirmation_form_webform_client_form_alter(&$form, &$form_state) {
+  $form['#node']->webform_conditional_confirmation['redirect_url'] = $form['#node']->webform['redirect_url'];
+  $form['#node']->webform['redirect_url'] = '<confirmation>';
+  $form['#submit'][] = 'webform_conditional_confirmation_webform_client_form_submit';
+}
+
+/**
+ * Submit handler; Load our conditional confirmation messages if required.
+ */
+function webform_conditional_confirmation_webform_client_form_submit($form, &$form_state) {
+  $node = $form['#node'];
+  $sid = $form_state['values']['details']['sid'];
+
+  // Don't trigger this if the webform isn't completed, i.e. final step of a
+  // multi-step form.
+  if (empty($form_state['save_draft']) && empty($form_state['webform_completed'])) {
+    return;
+  }
+  // If we have no sid, return.
+  if (empty($sid)) {
+    return;
+  }
+
+  module_load_include('inc', 'webform', 'includes/webform.submissions');
+  $submission = webform_get_submission($node->nid, $sid);
+  webform_conditional_confirmation_get_message($node, $submission);
+
+  // Strip out empty tags added by WYSIWYG editors if needed.
+  $confirmation = strlen(trim(strip_tags($node->webform['confirmation']))) ? $node->webform['confirmation'] : '';
+
+  // Clean up the redirect URL and filter it for webform tokens.
+  $redirect_url = trim($node->webform['redirect_url']);
+  $redirect_url = _webform_filter_values($redirect_url, $node, $submission, NULL, FALSE, TRUE);
+
+
+  // Check if user is submitting as a draft.
+  $is_draft = (int) !empty($form_state['save_draft']);
+
+  // Remove the domain name from the redirect.
+  $redirect_url = preg_replace('/^' . preg_quote($GLOBALS['base_url'], '/') . '\//', '', $redirect_url);
+
+  // Check confirmation and redirect_url fields.
+  $message = NULL;
+  $redirect = NULL;
+  $external_url = FALSE;
+  if (isset($form['actions']['draft']['#value']) && $form_state['values']['op'] == $form['actions']['draft']['#value']) {
+    $message = t('Submission saved. You may return to this form later and it will restore the current values.');
+  }
+  elseif ($is_draft) {
+    $redirect = NULL;
+  }
+  elseif (!empty($form_state['values']['details']['finished'])) {
+    $message = t('Submission updated.');
+  }
+  elseif ($redirect_url == '<none>') {
+    $redirect = NULL;
+  }
+  elseif ($redirect_url == '<confirmation>') {
+    $redirect = array('node/' . $node->nid . '/done', array('query' => array('sid' => $sid)));
+  }
+  elseif (valid_url($redirect_url, TRUE)) {
+    $redirect = $redirect_url;
+    $external_url = TRUE;
+  }
+  elseif ($redirect_url && strpos($redirect_url, 'http') !== 0) {
+    $parts = drupal_parse_url($redirect_url);
+    $parts['query'] ? ($parts['query']['sid'] = $sid) : ($parts['query'] = array('sid' => $sid));
+    $query = $parts['query'];
+    $redirect = array($parts['path'], array('query' => $query, 'fragment' => $parts['fragment']));
+  }
+
+  // Show a message if manually set.
+  if (isset($message)) {
+    drupal_set_message($message);
+  }
+  // If redirecting and we have a confirmation message, show it as a message.
+  elseif (!$is_draft && !$external_url && (!empty($redirect_url) && $redirect_url != '<confirmation>') && !empty($confirmation)) {
+    drupal_set_message(check_markup($confirmation, $node->webform['confirmation_format'], '', TRUE));
+  }
+
+  $form_state['redirect'] = $redirect;
+}
+
+/**
+ * Implements hook_menu_alter().
+ *
+ * Override the node/NID/done callback so we can control the message displayed.
+ */
+function webform_conditional_confirmation_menu_alter(&$items) {
+  $items['node/%webform_menu/done']['page callback'] = 'webform_conditional_confirmation_display_message';
+}
+
+/**
+ * Menu callback for node/NID/done.
+ */
+function webform_conditional_confirmation_display_message($node) {
+  module_load_include('inc', 'webform', 'includes/webform.submissions');
+
+  drupal_set_title($node->title);
+  webform_set_breadcrumb($node);
+  $sid = isset($_GET['sid']) ? $_GET['sid'] : NULL;
+  $submission = webform_get_submission($node->nid, $sid);
+
+  webform_conditional_confirmation_get_message($node, $submission);
+
+  return theme(array('webform_confirmation_' . $node->nid, 'webform_confirmation'), array('node' => $node, 'sid' => $sid));
+}
+

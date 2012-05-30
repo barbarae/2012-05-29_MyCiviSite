@@ -1,0 +1,13 @@
+name = Contact CC
+description = Adds cc and bcc fields to the site-wide contact form.
+core = 7.x
+
+dependencies[] = contact
+files[] = contact_cc.module
+files[] = contact_cc.install
+; Information added by drupal.org packaging script on 2011-04-16
+version = "7.x-1.1"
+core = "7.x"
+project = "contact_cc"
+datestamp = "1302983215"
+
